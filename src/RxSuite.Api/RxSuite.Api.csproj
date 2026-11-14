@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <!-- Presentation layer and COMPOSITION ROOT: HTTP endpoints plus the wiring of all layers. -->
+  <ItemGroup>
+    <ProjectReference Include="..\RxSuite.Application\RxSuite.Application.csproj" />
+    <ProjectReference Include="..\RxSuite.Infrastructure\RxSuite.Infrastructure.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+  </ItemGroup>
+</Project>

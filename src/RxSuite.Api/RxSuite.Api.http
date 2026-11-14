@@ -1,0 +1,112 @@
+@host = https://localhost:7080
+# After logging in, paste the accessToken here:
+@token = PASTE_ACCESS_TOKEN
+
+### 1. Plans (public)
+GET {{host}}/api/public/plans
+
+### 2. Sign up: creates the tenant, its first branch and the owner (14-day trial)
+POST {{host}}/api/public/sign-up
+Content-Type: application/json
+
+{
+  "ownerName": "Owner Name", "mobile": "01000000000", "email": "owner@example.com", "password": "pass1234",
+  "pharmacyNameEn": "Al Shifa Pharmacy", "pharmacyNameAr": "صيدلية الشفاء", "customerType": "Pharmacy",
+  "governorate": "Beni Suef", "city": "Beni Suef", "address": "1 Main St",
+  "licenceNumber": "L-1001", "commercialRegisterNumber": "CR-1001", "taxRegistrationNumber": "TR-1001"
+}
+
+### 3. Log in (returns accessToken)
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{ "login": "owner@example.com", "password": "pass1234" }
+
+### 4. Billing page
+GET {{host}}/api/subscription
+Authorization: Bearer {{token}}
+
+### 5. Create a pharmacist (PIN is used to approve Rx sales and overrides)
+POST {{host}}/api/users
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "fullName": "Dr. Pharmacist", "mobile": "01000000001", "email": "pharmacist@example.com", "password": "pass1234",
+  "pin": "2222", "roleCode": "PHARMACIST", "branchIds": [1], "isPharmacist": true,
+  "licenceNumber": "PH-77", "licenceExpiry": "2028-12-31"
+}
+
+### 6. Create an item (a box of 3 strips x 10 tablets, 90 EGP)
+POST {{host}}/api/items
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "code": "PARA500", "nameEn": "Paracetamol 500mg", "nameAr": "باراسيتامول ٥٠٠", "scientificName": "Paracetamol",
+  "strength": "500mg", "dosageForm": "Tablet", "stripsPerBox": 3, "unitsPerStrip": 10, "officialPrice": 90,
+  "sellingPrice": 90, "vatRate": 0, "etaItemCode": "EG-000-1", "isRxOnly": false, "isControlled": false,
+  "reorderLevel": 60, "barcodes": ["6221234567890"]
+}
+
+### 7. Create a supplier
+POST {{host}}/api/suppliers
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "nameEn": "Main Distributor", "nameAr": "الموزع الرئيسي", "type": "Distributor", "taxNumber": "", "phone": "", "paymentTermDays": 30, "creditLimit": 0 }
+
+### 8. Receive goods: 10 boxes + 1 bonus at 100 EGP (unit cost becomes 90.91)
+POST {{host}}/api/goods-receipts
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "branchId": 1, "supplierId": 1, "purchaseOrderId": null, "supplierInvoiceNumber": "INV-1",
+  "lines": [ { "itemId": 1, "batchNumber": "B-2028-03", "expiryDate": "2028-03-31", "quantityBoxes": 10, "bonusBoxes": 1, "costPerBox": 100, "discountPercent": 0, "shelfLifeOverrideReason": null } ]
+}
+
+### 9. POS search
+GET {{host}}/api/items/search?branchId=1&term=para
+Authorization: Bearer {{token}}
+
+### 10. Open a shift
+POST {{host}}/api/shifts
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "branchId": 1, "terminalCode": "POS-1", "openingFloat": 200 }
+
+### 11. Sell 1 box + 1 strip, cash
+POST {{host}}/api/sales
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "branchId": 1,
+  "lines": [ { "itemId": 1, "unit": "Box", "quantity": 1 }, { "itemId": 1, "unit": "Strip", "quantity": 1 } ],
+  "payments": [ { "method": "Cash", "amount": 150 } ]
+}
+
+### 12. Return the strip
+POST {{host}}/api/sales/1/returns
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "lines": [ { "lineNumber": 2, "quantity": 1, "isResaleable": true } ], "refundMethod": "Cash", "reason": "Customer changed mind" }
+
+### 13. X-report, stock alerts, ETA queue, audit log
+GET {{host}}/api/shifts/1
+Authorization: Bearer {{token}}
+
+###
+GET {{host}}/api/stock/alerts?branchId=1
+Authorization: Bearer {{token}}
+
+###
+GET {{host}}/api/eta-documents?status=Queued
+Authorization: Bearer {{token}}
+
+###
+GET {{host}}/api/audit-log?pageSize=20
+Authorization: Bearer {{token}}

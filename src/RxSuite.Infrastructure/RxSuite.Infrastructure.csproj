@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Infrastructure layer: the technical details (SQL Server, Dapper, stored procedures, hashing).
+       It implements the interfaces declared by the Application layer. -->
+  <ItemGroup>
+    <ProjectReference Include="..\RxSuite.Application\RxSuite.Application.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Shared framework: gives the built-in PasswordHasher, so no hashing code is hand-written. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Dapper" />
+    <PackageReference Include="Microsoft.Data.SqlClient" />
+  </ItemGroup>
+</Project>

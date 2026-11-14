@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Application layer: use cases. Depends on the Domain only; knows nothing about SQL or HTTP. -->
+  <ItemGroup>
+    <ProjectReference Include="..\RxSuite.Domain\RxSuite.Domain.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+  </ItemGroup>
+</Project>

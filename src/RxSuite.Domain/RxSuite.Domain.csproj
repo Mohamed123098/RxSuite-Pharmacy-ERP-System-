@@ -1,0 +1,3 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Domain layer: pure business model. It references NO other project and NO NuGet package. -->
+</Project>
