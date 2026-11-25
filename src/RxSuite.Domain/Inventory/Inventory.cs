@@ -10,7 +10,7 @@ namespace RxSuite.Domain.Inventory;
 public enum BatchStatus : byte { Available = 1, Quarantine = 2, Recalled = 3 }
 
 /// <summary>INV-12: the kinds of entry on a stock card.</summary>
-public enum MovementType : byte { Purchase = 1, Sale = 2, SaleReturn = 3, Adjustment = 4 }
+public enum MovementType : byte { Purchase = 1, Sale = 2, SaleReturn = 3, Adjustment = 4, TransferOut = 5, TransferIn = 6 }
 
 /// <summary>INV-09: reason codes for a stock adjustment.</summary>
 public enum AdjustmentReason : byte { Damage = 1, Theft = 2, Expiry = 3, Sample = 4, InternalUse = 5, Correction = 6 }

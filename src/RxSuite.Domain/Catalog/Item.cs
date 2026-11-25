@@ -127,9 +127,12 @@ public sealed class Item : TenantEntity<int>
     /// BR-POS-3 / AC-POS-3: a strip or unit costs its share of the box price, rounded to the step.
     /// A box of 3 strips at 90 EGP gives 30 EGP per strip.
     /// </summary>
-    public decimal PriceFor(UnitType unit, decimal roundingStep) => unit == UnitType.Box
-        ? SellingPrice
-        : Money.RoundTo(SellingPrice * BaseUnitsPer(unit) / UnitsPerBox, roundingStep);
+    public decimal PriceFor(UnitType unit, decimal roundingStep, decimal? branchBoxPrice = null)
+    {
+        // MBR-02: a branch may sell at its own box price; strips and units follow it the same way.
+        var boxPrice = branchBoxPrice ?? SellingPrice;
+        return unit == UnitType.Box ? boxPrice : Money.RoundTo(boxPrice * BaseUnitsPer(unit) / UnitsPerBox, roundingStep);
+    }
 
     /// <summary>BR-POS-2: the selling price may not exceed the official EDA price without the override permission.</summary>
     public void ChangePrice(decimal newPrice, bool allowAboveOfficialPrice)

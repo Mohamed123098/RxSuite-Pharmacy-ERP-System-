@@ -53,6 +53,9 @@ public static class DependencyInjection
         services.AddScoped<IPrescriptionRepository, PrescriptionRepository>();
         services.AddScoped<IDispenseRepository, DispenseRepository>();
         services.AddScoped<IControlledRegisterRepository, ControlledRegisterRepository>();
+        services.AddScoped<ITransferRepository, TransferRepository>();
+        services.AddScoped<IBranchItemSettingRepository, BranchItemSettingRepository>();
+        services.AddScoped<IBranchReportRepository, BranchReportRepository>();
     }
 
     #endregion

@@ -79,7 +79,16 @@ internal sealed class StockRepository(IDbSession session, ICurrentUser currentUs
         ExecuteScalarAsync<int>("dbo.usp_Batch_Receive", ScopedWithUser(new
         {
             BranchId = branchId, ItemId = itemId, BatchNumber = batchNumber, ExpiryDate = expiryDate,
-            Quantity = quantity, UnitCost = unitCost, GoodsReceiptId = goodsReceiptId
+            Quantity = quantity, UnitCost = unitCost, DocumentId = goodsReceiptId
+        }), ct);
+
+    /// <summary>BR-MBR-2: same procedure, recorded on the stock card as a transfer in.</summary>
+    public Task<int> ReceiveTransferBatchAsync(int branchId, int itemId, string batchNumber, DateOnly expiryDate, int quantity,
+        decimal unitCost, int transferId, CancellationToken ct) =>
+        ExecuteScalarAsync<int>("dbo.usp_Batch_Receive", ScopedWithUser(new
+        {
+            BranchId = branchId, ItemId = itemId, BatchNumber = batchNumber, ExpiryDate = expiryDate, Quantity = quantity,
+            UnitCost = unitCost, DocumentId = transferId, MovementType = (byte)MovementType.TransferIn, DocumentType = "Transfer"
         }), ct);
 
     public Task<int> RecallBatchAsync(int itemId, string batchNumber, CancellationToken ct) =>

@@ -93,7 +93,8 @@ internal sealed class CreateSaleHandler(
     ISaleRepository sales, IShiftRepository shifts, IItemRepository items, IStockRepository stock,
     IEtaDocumentRepository etaDocuments, IUserRepository users, IOverrideAuthorizer overrides,
     IDispensingPlanner dispensing, IPrescriptionRepository prescriptions, IDispenseRepository dispenses,
-    IControlledRegisterRepository register, IAuditTrail audit, ICurrentUser currentUser, IClock clock, BusinessRules rules)
+    IControlledRegisterRepository register, IBranchItemSettingRepository branchSettings, IAuditTrail audit,
+    ICurrentUser currentUser, IClock clock, BusinessRules rules)
     : IRequestHandler<CreateSaleCommand, SaleReceiptDto>
 {
     public async Task<Result<SaleReceiptDto>> HandleAsync(CreateSaleCommand c, CancellationToken ct)
@@ -121,6 +122,11 @@ internal sealed class CreateSaleHandler(
         if (c.Lines.FirstOrDefault(l => !itemsById.ContainsKey(l.ItemId)) is { } unknown)
             return Errors.NotFound("Item", unknown.ItemId);
 
+        // MBR-02: the branch's own price, and items the branch does not sell.
+        var branchSetting = (await branchSettings.GetAsync(c.BranchId, itemIds, ct)).ToDictionary(s => s.ItemId);
+        if (c.Lines.FirstOrDefault(l => branchSetting.GetValueOrDefault(l.ItemId)?.IsHidden == true) is { } hidden)
+            return Error.Conflict("Item.NotSoldHere", $"{itemsById[hidden.ItemId].DisplayName} is not sold in this branch.");
+
         var batches = await stock.GetBatchesAsync(c.BranchId, itemIds, ct);
         var lines = new List<SaleLine>();
 
@@ -136,7 +142,8 @@ internal sealed class CreateSaleHandler(
             foreach (var part in allocation.Value) batches.First(b => b.Id == part.BatchId).Take(part.Quantity);
 
             lines.Add(SaleLine.Create(index + 1, item, request.Unit, request.Quantity,
-                item.PriceFor(request.Unit, rules.Pos.UnitPriceRounding), request.DiscountPercent,
+                item.PriceFor(request.Unit, rules.Pos.UnitPriceRounding, branchSetting.GetValueOrDefault(item.Id)?.SellingPrice),
+                request.DiscountPercent,
                 c.InvoiceDiscountPercent, allocation.Value));
         }
 

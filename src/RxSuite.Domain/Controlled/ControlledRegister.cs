@@ -15,7 +15,9 @@ public enum RegisterEntryType : byte
     Dispense = 2,     // out: sold to a patient against a prescription
     Destruction = 3,  // out: expired or damaged stock destroyed
     Adjustment = 4,   // in or out: a stock count correction
-    Correction = 5    // in, out or zero: corrects an earlier entry and points to it (CTL-05)
+    Correction = 5,   // in, out or zero: corrects an earlier entry and points to it (CTL-05)
+    TransferOut = 6,  // out: shipped to another branch (BR-MBR-3)
+    TransferIn = 7    // in: received from another branch (BR-MBR-3)
 }
 
 #endregion
@@ -94,6 +96,8 @@ public sealed class ControlledRegisterEntry : TenantEntity<long>
         if (quantity == 0) throw new DomainException("A register entry must move the balance.");
         if (type == RegisterEntryType.Purchase && quantity < 0) throw new DomainException("A purchase adds stock.");
         if (type == RegisterEntryType.Destruction && quantity > 0) throw new DomainException("A destruction removes stock.");
+        if (type == RegisterEntryType.TransferOut && quantity > 0) throw new DomainException("A transfer out removes stock.");
+        if (type == RegisterEntryType.TransferIn && quantity < 0) throw new DomainException("A transfer in adds stock.");
 
         return new ControlledRegisterEntry
         {

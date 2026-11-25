@@ -7,6 +7,7 @@ using RxSuite.Application.Features.Inventory;
 using RxSuite.Application.Features.Platform;
 using RxSuite.Application.Features.Purchasing;
 using RxSuite.Application.Features.Tax;
+using RxSuite.Application.Features.Transfers;
 using RxSuite.Domain.Catalog;
 using RxSuite.Domain.Clinical;
 using RxSuite.Domain.Controlled;
@@ -16,6 +17,7 @@ using RxSuite.Domain.Platform;
 using RxSuite.Domain.Purchasing;
 using RxSuite.Domain.Sales;
 using RxSuite.Domain.Tax;
+using RxSuite.Domain.Transfers;
 
 namespace RxSuite.Application.Abstractions;
 
@@ -110,6 +112,10 @@ public interface IStockRepository
     /// <summary>Adds received stock to its batch (created when new) and returns the batch Id.</summary>
     Task<int> ReceiveBatchAsync(int branchId, int itemId, string batchNumber, DateOnly expiryDate, int quantity,
         decimal unitCost, int goodsReceiptId, CancellationToken ct);
+
+    /// <summary>BR-MBR-2: adds transferred stock to the same batch (number + expiry) at the destination; returns its Id.</summary>
+    Task<int> ReceiveTransferBatchAsync(int branchId, int itemId, string batchNumber, DateOnly expiryDate, int quantity,
+        decimal unitCost, int transferId, CancellationToken ct);
 
     Task<int> RecallBatchAsync(int itemId, string batchNumber, CancellationToken ct);
     /// <summary>INV-08: quarantines every expired batch of every tenant. Returns how many.</summary>
@@ -278,6 +284,41 @@ public interface IControlledRegisterRepository
 
     /// <summary>US-CTL-3: register balance, stock and last check of every controlled item in the branch.</summary>
     Task<IReadOnlyList<ControlledItemStatusDto>> GetStatusAsync(int branchId, CancellationToken ct);
+}
+
+#endregion
+
+#region Multi-branch (BRD 8.8)
+
+public interface ITransferRepository
+{
+    Task<int> AddAsync(Transfer transfer, CancellationToken ct);
+    Task<Transfer?> GetByIdAsync(int transferId, CancellationToken ct);
+
+    /// <summary>Saves the status, who did what and when, and the shipped batches with what was received.</summary>
+    Task UpdateAsync(Transfer transfer, CancellationToken ct);
+    Task<IReadOnlyList<TransferSummaryDto>> GetListAsync(int? branchId, TransferStatus? status, CancellationToken ct);
+}
+
+/// <summary>MBR-02: the per-branch price, min/max and visibility of items.</summary>
+public interface IBranchItemSettingRepository
+{
+    /// <summary>Creates or replaces the setting of one item in one branch.</summary>
+    Task SaveAsync(BranchItemSetting setting, CancellationToken ct);
+    Task<IReadOnlyList<BranchItemSetting>> GetAsync(int branchId, IEnumerable<int> itemIds, CancellationToken ct);
+}
+
+/// <summary>Cross-branch read models for HQ (MBR-05, MBR-06, MBR-08).</summary>
+public interface IBranchReportRepository
+{
+    /// <summary>Every batch of the matching items in every branch, plus what is in transit.</summary>
+    Task<(IReadOnlyList<StockMatrixRow> Batches, IReadOnlyList<InTransitRow> InTransit)> GetStockMatrixAsync(string term,
+        CancellationToken ct);
+
+    Task<IReadOnlyList<RebalancingSuggestionDto>> GetRebalancingSuggestionsAsync(DateOnly today, DateOnly nearExpiryUntil,
+        int salesWindowDays, CancellationToken ct);
+
+    Task<IReadOnlyList<BranchPerformanceDto>> GetBranchPerformanceAsync(DateOnly from, DateOnly to, CancellationToken ct);
 }
 
 #endregion

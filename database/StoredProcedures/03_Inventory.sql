@@ -89,7 +89,8 @@ AS
 BEGIN
     SET NOCOUNT ON;
     SELECT TOP (30)
-           i.Id, i.Code, i.NameEn, i.NameAr, i.ScientificName, i.Strength, i.DosageForm, i.SellingPrice,
+           i.Id, i.Code, i.NameEn, i.NameAr, i.ScientificName, i.Strength, i.DosageForm,
+           ISNULL(bs.SellingPrice, i.SellingPrice) AS SellingPrice,   -- MBR-02: the branch's own price
            i.StripsPerBox * i.UnitsPerStrip AS UnitsPerBox,
            ISNULL(s.AvailableQuantity, 0) AS AvailableQuantity, s.NearestExpiry, i.IsRxOnly,
            CAST(CASE WHEN i.ControlSchedule > 0 THEN 1 ELSE 0 END AS BIT) AS IsControlled
@@ -98,8 +99,10 @@ BEGIN
                  FROM dbo.Batches b
                  WHERE b.TenantId = i.TenantId AND b.ItemId = i.Id AND b.BranchId = @BranchId
                    AND b.Status = 1 AND b.Quantity > 0 AND b.ExpiryDate >= @Today) s   -- sellable stock only (POS-05)
+    LEFT JOIN dbo.BranchItemSettings bs ON bs.TenantId = i.TenantId AND bs.BranchId = @BranchId AND bs.ItemId = i.Id
     WHERE i.TenantId = @TenantId
       AND i.IsActive = 1
+      AND ISNULL(bs.IsHidden, 0) = 0
       AND (i.Code LIKE @Term + N'%'
            OR i.NameEn LIKE N'%' + @Term + N'%'
            OR i.NameAr LIKE N'%' + @Term + N'%'
@@ -201,10 +204,12 @@ GO
 
 -- #region usp_Batch_Receive : adds received stock to its batch (created when new) and returns the batch Id
 /* BR-INV-2: the batch is found by item + batch number + expiry in the branch.
-   BR-PUR-2: when the batch already holds stock, its unit cost becomes the weighted average. */
+   BR-PUR-2: when the batch already holds stock, its unit cost becomes the weighted average.
+   Used by goods receipts (type 1) and by transfers arriving at their destination (type 6, BR-MBR-2). */
 CREATE OR ALTER PROCEDURE dbo.usp_Batch_Receive
     @TenantId INT, @UserId INT, @BranchId INT, @ItemId INT, @BatchNumber NVARCHAR(50), @ExpiryDate DATE,
-    @Quantity INT, @UnitCost DECIMAL(18,6), @GoodsReceiptId INT
+    @Quantity INT, @UnitCost DECIMAL(18,6), @DocumentId BIGINT, @MovementType TINYINT = 1,
+    @DocumentType NVARCHAR(30) = N'GoodsReceipt'
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -227,7 +232,7 @@ BEGIN
     END
 
     INSERT INTO dbo.StockMovements (TenantId, BranchId, BatchId, ItemId, Quantity, Type, DocumentType, DocumentId, UserId)
-    VALUES (@TenantId, @BranchId, @BatchId, @ItemId, @Quantity, 1, N'GoodsReceipt', @GoodsReceiptId, @UserId);
+    VALUES (@TenantId, @BranchId, @BatchId, @ItemId, @Quantity, @MovementType, @DocumentType, @DocumentId, @UserId);
 
     SELECT @BatchId;
 END
@@ -297,21 +302,23 @@ END
 GO
 -- #endregion
 
--- #region usp_Stock_GetLowStock : items whose sellable stock is at or below the reorder level (AC-INV-3)
+-- #region usp_Stock_GetLowStock : items whose sellable stock is at or below the reorder level (AC-INV-3), or the branch's own minimum (MBR-02)
 CREATE OR ALTER PROCEDURE dbo.usp_Stock_GetLowStock
     @TenantId INT, @BranchId INT, @Today DATE
 AS
 BEGIN
     SET NOCOUNT ON;
     SELECT i.Id AS ItemId, CASE WHEN i.NameEn <> N'' THEN i.NameEn ELSE i.NameAr END AS ItemName,
-           ISNULL(s.AvailableQuantity, 0) AS AvailableQuantity, i.ReorderLevel
+           ISNULL(s.AvailableQuantity, 0) AS AvailableQuantity, ISNULL(bs.MinStock, i.ReorderLevel) AS ReorderLevel
     FROM dbo.Items i
+    LEFT JOIN dbo.BranchItemSettings bs ON bs.TenantId = i.TenantId AND bs.BranchId = @BranchId AND bs.ItemId = i.Id
     OUTER APPLY (SELECT SUM(b.Quantity) AS AvailableQuantity
                  FROM dbo.Batches b
                  WHERE b.TenantId = i.TenantId AND b.ItemId = i.Id AND b.BranchId = @BranchId
                    AND b.Status = 1 AND b.ExpiryDate >= @Today) s
-    WHERE i.TenantId = @TenantId AND i.IsActive = 1 AND i.ReorderLevel > 0
-      AND ISNULL(s.AvailableQuantity, 0) <= i.ReorderLevel
+    WHERE i.TenantId = @TenantId AND i.IsActive = 1 AND ISNULL(bs.IsHidden, 0) = 0
+      AND ISNULL(bs.MinStock, i.ReorderLevel) > 0
+      AND ISNULL(s.AvailableQuantity, 0) <= ISNULL(bs.MinStock, i.ReorderLevel)
     ORDER BY ItemName;
 END
 GO

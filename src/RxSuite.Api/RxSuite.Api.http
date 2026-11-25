@@ -216,3 +216,50 @@ Content-Type: application/json
 ### 27. Owner's alerts: mismatches and overdue counts (US-CTL-3)
 GET {{host}}/api/controlled-register/status?branchId=1&onlyNeedingAttention=true
 Authorization: Bearer {{token}}
+
+### ===== BRD 8.8 Multi-branch and warehouse =====
+
+### 28. A branch asks the warehouse (branch 3) for 20 boxes (US-MBR-2)
+POST {{host}}/api/transfers/requests
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "fromBranchId": 3, "toBranchId": 1, "lines": [ { "itemId": 1, "unit": "Box", "quantity": 20 } ], "note": "Weekly refill" }
+
+### 29. HQ approves, the warehouse ships (FEFO batches; the stock is now in transit)
+POST {{host}}/api/transfers/1/approve
+Authorization: Bearer {{token}}
+
+###
+POST {{host}}/api/transfers/1/ship
+Authorization: Bearer {{token}}
+
+### 30. The branch receives 18 of 20 boxes (AC-MBR-1). sourceBatchId comes from the ship response.
+POST {{host}}/api/transfers/1/receive
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "lines": [ { "sourceBatchId": 1, "quantityReceived": 540 } ], "note": "2 boxes crushed in the van" }
+
+### 31. Shortages for HQ and the source
+GET {{host}}/api/transfers?status=ReceivedWithShortage
+Authorization: Bearer {{token}}
+
+### 32. Branch 1 sells paracetamol at its own price (MBR-02)
+PUT {{host}}/api/branches/1/items/1/settings
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "sellingPrice": 85, "minStock": 100, "maxStock": 2000, "isHidden": false }
+
+### 33. HQ views: stock matrix, rebalancing suggestions, branch comparison
+GET {{host}}/api/hq/stock-matrix?term=para
+Authorization: Bearer {{token}}
+
+###
+GET {{host}}/api/hq/rebalancing?salesWindowDays=30
+Authorization: Bearer {{token}}
+
+###
+GET {{host}}/api/hq/branch-performance?from=2026-11-01&to=2026-11-30
+Authorization: Bearer {{token}}

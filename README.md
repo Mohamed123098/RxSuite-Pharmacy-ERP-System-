@@ -6,7 +6,7 @@
   <img alt=".NET 11" src="https://img.shields.io/badge/.NET-11-512BD4?style=for-the-badge&logo=dotnet&logoColor=white">
   <img alt="C#" src="https://img.shields.io/badge/C%23-ASP.NET%20Core-239120?style=for-the-badge&logo=csharp&logoColor=white">
   <img alt="Dapper" src="https://img.shields.io/badge/Dapper-stored%20procedures%20only-0E7C73?style=for-the-badge">
-  <img alt="SQL Server" src="https://img.shields.io/badge/SQL%20Server-43%20tables%20%C2%B7%2093%20procs-CC2927?style=for-the-badge">
+  <img alt="SQL Server" src="https://img.shields.io/badge/SQL%20Server-47%20tables%20%C2%B7%20102%20procs-CC2927?style=for-the-badge">
   <img alt="React" src="https://img.shields.io/badge/React-TypeScript%20%2B%20Vite-61DAFB?style=for-the-badge&logo=react&logoColor=black">
 </p>
 
@@ -16,7 +16,7 @@
   <img alt="Tenancy" src="https://img.shields.io/badge/tenancy-multi--tenant-F2A33A?style=flat-square">
   <img alt="Spec" src="https://img.shields.io/badge/spec-BRD%20v1.1-45605E?style=flat-square">
   <img alt="Stage" src="https://img.shields.io/badge/stage-core%20slice-F2A33A?style=flat-square">
-  <img alt="Behaviour checks" src="https://img.shields.io/badge/behaviour%20checks-158%20passing-2E7D32?style=flat-square">
+  <img alt="Behaviour checks" src="https://img.shields.io/badge/behaviour%20checks-185%20passing-2E7D32?style=flat-square">
 </p>
 
 <p align="center">
@@ -39,7 +39,8 @@ repository holds its **back end**, built from **RxSuite BRD v1.1**, plus an empt
 the front end.
 
 This build is the **core slice** the BRD's delivery plan puts first (months 1-6), plus
-**prescriptions with clinical checks (8.6)** and the **digital controlled-drugs register (8.7)**. The section
+**prescriptions with clinical checks (8.6)**, the **digital controlled-drugs register (8.7)** and
+**multi-branch transfers with HQ views (8.8)**. The section
 [BRD coverage](#-brd-coverage) lists exactly what is built, what is partial and what is not started.
 
 <table>
@@ -52,15 +53,16 @@ This build is the **core slice** the BRD's delivery plan puts first (months 1-6)
     <td align="center" width="16%">🏛️<br><b>ETA</b><br><sub>Tax document queue and tracking</sub></td>
   </tr>
   <tr>
-    <td align="center" colspan="3">🩺<br><b>Prescriptions</b><br><sub>Drug database, allergy and interaction alerts, partial dispensing and refills, encrypted images, labels</sub></td>
-    <td align="center" colspan="3">🔐<br><b>Controlled drugs</b><br><sub>Append-only register with running balance, signed counts, mismatch alerts, inspector export</sub></td>
+    <td align="center" colspan="2">🩺<br><b>Prescriptions</b><br><sub>Drug database, allergy and interaction alerts, partial dispensing and refills, encrypted images, labels</sub></td>
+    <td align="center" colspan="2">🔐<br><b>Controlled drugs</b><br><sub>Append-only register with running balance, signed counts, mismatch alerts, inspector export</sub></td>
+    <td align="center" colspan="2">🏬<br><b>Multi-branch</b><br><sub>Transfers with shortages, branch prices, stock matrix, rebalancing, branch comparison</sub></td>
   </tr>
 </table>
 
 | | |
 |---|---|
 | 🧱 **Stack** | .NET 11, ASP.NET Core Web API, SQL Server |
-| 🗄️ **Data access** | Dapper with **stored procedures only**: 93 procedures, no SQL text in C# |
+| 🗄️ **Data access** | Dapper with **stored procedures only**: 102 procedures, no SQL text in C# |
 | 🏗️ **Design** | Clean Architecture, SOLID, twelve named design patterns |
 | 🏬 **Tenancy** | Every table carries `TenantId`; the repositories add it to every call |
 | 📝 **Code style** | Named `#region` blocks, XML summaries, comments that cite the BRD rule |
@@ -76,7 +78,7 @@ flowchart LR
     INF["🔌 RxSuite.Infrastructure<br/>Dapper repositories · unit of work"]:::infra
     APP["⚙️ RxSuite.Application<br/>use cases · pipeline · interfaces"]:::app
     DOM["💎 RxSuite.Domain<br/>entities · rules · FEFO · ETA states"]:::domain
-    DB[("🗄️ SQL Server<br/>43 tables · 93 procedures")]:::db
+    DB[("🗄️ SQL Server<br/>47 tables · 102 procedures")]:::db
 
     WEB -. "/api" .-> API
     API --> INF
@@ -104,7 +106,7 @@ RxSuite.sln
 ├─ Directory.Build.props        target framework, nullable, warnings as errors (all projects)
 ├─ Directory.Packages.props     all NuGet versions in one place
 ├─ database/
-│  ├─ 001_Schema.sql            43 tables, keys, constraints, immutable audit and register triggers
+│  ├─ 001_Schema.sql            47 tables, keys, constraints, immutable audit and register triggers
 │  ├─ 002_Seed.sql              plans, roles, permission matrix (BRD section 9), SAMPLE drug database
 │  └─ StoredProcedures/         one file per module, one region per procedure
 ├─ docs/assets/                 logo and banner
@@ -246,6 +248,32 @@ The running balance is worked out by the stored procedure under a lock, so two t
 from the same balance, and a database trigger refuses any update or delete, Owner included
 (BR-CTL-2). Signed balance checks are immutable too.
 
+### Transfers between branches and the warehouse (BRD 8.8)
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> Requested: branch asks (US-MBR-2)
+    [*] --> Approved: direct transfer by HQ (MBR-04)
+    Requested --> Approved: HQ approves
+    Requested --> Rejected
+    Requested --> Cancelled
+    Approved --> Cancelled
+    Approved --> InTransit: ship, FEFO batches
+    InTransit --> Received: all arrived
+    InTransit --> ReceivedWithShortage: less arrived (AC-MBR-1)
+    Received --> [*]
+    ReceivedWithShortage --> [*]
+```
+
+- **In transit** stock has left the source and is not yet sellable at the destination, but it still
+  counts in the tenant total on the stock matrix (BR-MBR-1).
+- The destination receives **the same batch number, expiry and cost** (BR-MBR-2).
+- A shortage needs a note; the source branch and HQ see it in the audit trail and in the transfers
+  list filtered on `ReceivedWithShortage`.
+- Controlled items are shipped and received by a **pharmacist at each end**, with a register entry at
+  both branches (BR-MBR-3).
+
 ---
 
 ## 🧩 Design patterns
@@ -305,7 +333,8 @@ A use case lives in one file with the regions `Command`/`Query`, `Validator`, `H
 
    It listens on https://localhost:7080. Walk through `src/RxSuite.Api/RxSuite.Api.http`: sign up,
    log in, create an item, receive goods, open a shift, sell, return; then steps 14-27 for a
-   prescription with an allergy alert, and the controlled register. OpenAPI: `/openapi/v1.json`.
+   prescription with an allergy alert, and the controlled register; steps 28-33 for a transfer with a
+   shortage, branch prices and the HQ views. OpenAPI: `/openapi/v1.json`.
 5. **Front end.**
 
    ```bash
@@ -333,6 +362,8 @@ A use case lives in one file with the regions `Command`/`Query`, `Validator`, `H
 | 🩺 Drugs and checks | `GET /api/drugs`, `POST /api/clinical-checks` |
 | 🧑‍⚕️ Patients | `GET/POST /api/patients`, `GET /api/patients/{id}`, `POST /api/patients/{id}/allergies`, `GET/POST /api/prescribers` |
 | 📄 Prescriptions | `POST /api/prescriptions`, `GET /api/prescriptions/{id}`, `GET /api/prescriptions/open`, `POST /api/prescriptions/{id}/cancel`, `POST /api/prescriptions/{id}/images`, `GET /api/prescriptions/{id}/images/{imageId}`, `GET /api/sales/{id}/labels` |
+| 🚚 Transfers | `POST /api/transfers/requests`, `POST /api/transfers/direct`, `GET /api/transfers`, `GET /api/transfers/{id}`, `POST /api/transfers/{id}/approve`, `.../reject`, `.../cancel`, `.../ship`, `.../receive` |
+| 🏬 Branches and HQ | `PUT /api/branches/{branchId}/items/{itemId}/settings`, `GET /api/hq/stock-matrix`, `GET /api/hq/rebalancing`, `GET /api/hq/branch-performance` |
 | 🔐 Controlled register | `GET /api/controlled-register`, `GET /api/controlled-register/export`, `GET /api/controlled-register/monthly-summary`, `GET /api/controlled-register/status`, `POST /api/controlled-register/balance-checks`, `POST /api/controlled-register/{entryId}/corrections` |
 
 ⏱️ **Background jobs** (`Api/BackgroundJobs`): nightly subscription status refresh and quarantine of
@@ -352,7 +383,7 @@ expired batches; ETA queue submission every 30 seconds.
 | 8.9 | ETA e-invoicing | 🟡 Queue and tracking built, real adapter missing |
 | 8.6 | Prescriptions | 🟡 Core built |
 | 8.7 | Controlled drugs | 🟡 Core built |
-| 8.8 | Multi-branch transfers | ⚪ Not started |
+| 8.8 | Multi-branch and warehouse | 🟡 Core built |
 | 8.10 | Insurance | ⚪ Not started |
 | 8.11 | Customers & loyalty | ⚪ Not started |
 | 8.12 | Online orders | ⚪ Not started |
@@ -376,6 +407,7 @@ expired batches; ETA queue submission every 30 seconds.
 | 8.9 ETA | ACC-04, ACC-06; BR-ACC-2, 3; AC-ACC-2 |
 | 8.6 Prescriptions | RX-02, RX-03, RX-04, RX-05, RX-06, RX-07, RX-08, RX-10; BR-RX-1, 2, 3; AC-RX-1, 2 |
 | 8.7 Controlled drugs | CTL-01, CTL-02, CTL-03, CTL-04, CTL-05, CTL-08; BR-CTL-2; AC-CTL-1 |
+| 8.8 Multi-branch | MBR-02, MBR-03, MBR-04, MBR-05; BR-MBR-1, 2, 3; AC-MBR-1 |
 
 </details>
 
@@ -408,6 +440,16 @@ expired batches; ETA queue submission every 30 seconds.
 - CTL-06 the signed count is built; the locked-cabinet storage location is not (INV-04).
 - CTL-07 the register exports as CSV with Arabic and English headers; **the official inspector layout
   must be confirmed** and then matched (or printed as PDF).
+- MBR-01 branches have name, type and address; licence, tax branch code, ETA branch ID, opening hours
+  and manager are not stored yet.
+- MBR-06 rebalancing suggestions are a stored procedure (near expiry or above the branch maximum,
+  next to the branch that sold the item fastest); acting on one is a direct transfer.
+- MBR-08 branch comparison reports sales, returns, margin, stock days and expiry losses; cost is taken
+  at each batch's current unit cost.
+- MBR-07 central purchasing with a distribution plan, and MBR-09 internal transfer markup, are not
+  built: transfers move stock at cost.
+- AC-MBR-1 "notified" means the audit trail and the shortages list; there are no push or e-mail
+  notifications yet.
 - BR-CTL-1 controlled sales need the logged-in pharmacist and the patient's national ID on the server;
   the offline terminal itself is not built.
 
@@ -420,7 +462,7 @@ expired batches; ETA queue submission every 30 seconds.
 
 SUB-02, 05, 07-10, 13-18 · USR-05, 06, 08, 09, 13, 14 · POS-06 (always blocks), 08, 09, 11, 12,
 17-21 · INV-03, 10, 11, 13-16 · PUR-02, 05, 08, 09, 11-13 · ACC-01, 02, 08-13 · and the whole of
-8.8 Multi-branch transfers, 8.10 Insurance,
+8.10 Insurance,
 8.11 Customers & loyalty, 8.12 Online orders, 8.13 Hospital, 8.14 Reports, 8.15 AI,
 8.16 Integrations.
 
@@ -448,6 +490,11 @@ SUB-02, 05, 07-10, 13-18 · USR-05, 06, 08, 09, 13, 14 · POS-06 (always blocks)
    backed up: without it the images cannot be read. Every view and every register export is audited.
 9. **Pharmacists now hold `stock.adjust`** in the seed, because only a pharmacist may adjust a
    controlled item.
+10. **Transfer roles** (seed): branch managers, pharmacists and inventory clerks request, ship and
+    receive; only the Owner approves and makes direct transfers. A transfer ships what the source has:
+    a line with less stock ships less, and the receiver counts every shipped batch, even when 0 arrived.
+11. **Rebalancing and branch comparison need `reports.branches`** (Owner, branch manager,
+    accountant); everyone sees only the branches they are assigned to.
 
 ---
 
@@ -460,7 +507,7 @@ SUB-02, 05, 07-10, 13-18 · USR-05, 06, 08, 09, 13, 14 · POS-06 (always blocks)
 | Check | Result |
 |---|---|
 | Compile | ✅ Warning-free on the .NET 10 SDK with stand-ins for Dapper and Microsoft.Data.SqlClient (the .NET 11 SDK and NuGet were not reachable where this was built) |
-| Behaviour | ✅ 158 checks of the use cases and domain rules pass against in-memory repositories |
+| Behaviour | ✅ 185 checks of the use cases and domain rules pass against in-memory repositories |
 | HTTP | ✅ Run end to end with in-memory repositories: sign-up, login, token, permissions, sale, return, shift report, webhook, background jobs |
 | SQL syntax | ✅ Scripts pass a T-SQL syntax parser; every procedure name and parameter matches its C# call |
 | Build on .NET 11 | ❌ Not done |

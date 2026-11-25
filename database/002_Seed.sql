@@ -36,23 +36,29 @@ JOIN (VALUES
     (N'OWNER', N'purchasing.create'), (N'OWNER', N'purchasing.approve'), (N'OWNER', N'purchasing.receive'),
     (N'OWNER', N'eta.manage'), (N'OWNER', N'users.manage'), (N'OWNER', N'subscription.manage'),
     (N'OWNER', N'branches.manage'), (N'OWNER', N'audit.view'), (N'OWNER', N'controlled.view'),
+    (N'OWNER', N'transfers.request'), (N'OWNER', N'transfers.approve'), (N'OWNER', N'transfers.ship'),
+    (N'OWNER', N'transfers.receive'), (N'OWNER', N'reports.branches'),
     -- Branch manager
     (N'BRANCH_MANAGER', N'pos.sell'), (N'BRANCH_MANAGER', N'pos.override'), (N'BRANCH_MANAGER', N'pos.return'),
     (N'BRANCH_MANAGER', N'inventory.view'), (N'BRANCH_MANAGER', N'items.manage'), (N'BRANCH_MANAGER', N'prices.change'),
     (N'BRANCH_MANAGER', N'stock.adjust'), (N'BRANCH_MANAGER', N'stock.adjust.approve'),
     (N'BRANCH_MANAGER', N'purchasing.create'), (N'BRANCH_MANAGER', N'purchasing.approve'),
     (N'BRANCH_MANAGER', N'purchasing.receive'), (N'BRANCH_MANAGER', N'controlled.view'),
+    (N'BRANCH_MANAGER', N'transfers.request'), (N'BRANCH_MANAGER', N'transfers.ship'), (N'BRANCH_MANAGER', N'transfers.receive'),
+    (N'BRANCH_MANAGER', N'reports.branches'),
     -- Pharmacist
     (N'PHARMACIST', N'pos.sell'), (N'PHARMACIST', N'pos.return'), (N'PHARMACIST', N'rx.dispense'),
     (N'PHARMACIST', N'inventory.view'), (N'PHARMACIST', N'purchasing.create'), (N'PHARMACIST', N'purchasing.receive'),
     (N'PHARMACIST', N'controlled.view'), (N'PHARMACIST', N'stock.adjust'),
+    (N'PHARMACIST', N'transfers.request'), (N'PHARMACIST', N'transfers.ship'), (N'PHARMACIST', N'transfers.receive'),
     -- Cashier
     (N'CASHIER', N'pos.sell'), (N'CASHIER', N'pos.return'), (N'CASHIER', N'inventory.view'),
     -- Inventory clerk
     (N'INVENTORY_CLERK', N'inventory.view'), (N'INVENTORY_CLERK', N'items.manage'), (N'INVENTORY_CLERK', N'stock.adjust'),
     (N'INVENTORY_CLERK', N'purchasing.create'), (N'INVENTORY_CLERK', N'purchasing.receive'),
+    (N'INVENTORY_CLERK', N'transfers.request'), (N'INVENTORY_CLERK', N'transfers.ship'), (N'INVENTORY_CLERK', N'transfers.receive'),
     -- Accountant
-    (N'ACCOUNTANT', N'eta.manage'), (N'ACCOUNTANT', N'inventory.view'), (N'ACCOUNTANT', N'audit.view'),
+    (N'ACCOUNTANT', N'eta.manage'), (N'ACCOUNTANT', N'inventory.view'), (N'ACCOUNTANT', N'audit.view'), (N'ACCOUNTANT', N'reports.branches'),
     -- Hospital pharmacist (its own module is not built yet)
     (N'HOSPITAL_PHARMACIST', N'rx.dispense'), (N'HOSPITAL_PHARMACIST', N'inventory.view'),
     (N'HOSPITAL_PHARMACIST', N'purchasing.receive')

@@ -265,7 +265,7 @@ CREATE TABLE dbo.StockMovements
     BatchId      INT           NOT NULL CONSTRAINT FK_StockMovements_Batches REFERENCES dbo.Batches (Id),
     ItemId       INT           NOT NULL,
     Quantity     INT           NOT NULL,  -- signed: + in, - out
-    Type         TINYINT       NOT NULL,  -- 1 Purchase, 2 Sale, 3 SaleReturn, 4 Adjustment
+    Type         TINYINT       NOT NULL,  -- 1 Purchase, 2 Sale, 3 SaleReturn, 4 Adjustment, 5 TransferOut, 6 TransferIn
     DocumentType NVARCHAR(30)  NOT NULL,
     DocumentId   BIGINT        NOT NULL,
     Reason       NVARCHAR(300) NULL,
@@ -632,7 +632,7 @@ CREATE TABLE dbo.ControlledRegister
     BranchId            INT           NOT NULL CONSTRAINT FK_ControlledRegister_Branches REFERENCES dbo.Branches (Id),
     ItemId              INT           NOT NULL CONSTRAINT FK_ControlledRegister_Items REFERENCES dbo.Items (Id),
     BatchId             INT           NULL CONSTRAINT FK_ControlledRegister_Batches REFERENCES dbo.Batches (Id),
-    Type                TINYINT       NOT NULL,  -- 1 Purchase, 2 Dispense, 3 Destruction, 4 Adjustment, 5 Correction
+    Type                TINYINT       NOT NULL,  -- 1 Purchase, 2 Dispense, 3 Destruction, 4 Adjustment, 5 Correction, 6 TransferOut, 7 TransferIn
     Quantity            INT           NOT NULL,  -- signed, smallest unit
     Balance             INT           NOT NULL CONSTRAINT CK_ControlledRegister_Balance CHECK (Balance >= 0),
     OccurredAtUtc       DATETIME2(0)  NOT NULL,
@@ -694,4 +694,72 @@ BEGIN
     THROW 51002, 'Balance checks are signed records and cannot be changed or deleted.', 1;
 END
 GO
+-- #endregion
+
+-- #region Multi-branch and warehouse (BRD 8.8)
+-- MBR-02: per-branch price, min/max and visibility; a missing row means "use the central item".
+CREATE TABLE dbo.BranchItemSettings
+(
+    Id           INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_BranchItemSettings PRIMARY KEY,
+    TenantId     INT           NOT NULL,
+    BranchId     INT           NOT NULL CONSTRAINT FK_BranchItemSettings_Branches REFERENCES dbo.Branches (Id),
+    ItemId       INT           NOT NULL CONSTRAINT FK_BranchItemSettings_Items REFERENCES dbo.Items (Id),
+    SellingPrice DECIMAL(18,2) NULL CONSTRAINT CK_BranchItemSettings_Price CHECK (SellingPrice > 0),
+    MinStock     INT           NULL,
+    MaxStock     INT           NULL,
+    IsHidden     BIT           NOT NULL CONSTRAINT DF_BranchItemSettings_IsHidden DEFAULT (0),
+    CONSTRAINT UQ_BranchItemSettings UNIQUE (TenantId, BranchId, ItemId),
+    CONSTRAINT CK_BranchItemSettings_MinMax CHECK (MinStock IS NULL OR MaxStock IS NULL OR MinStock <= MaxStock)
+);
+
+CREATE TABLE dbo.Transfers
+(
+    Id             INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_Transfers PRIMARY KEY,
+    TenantId       INT           NOT NULL,
+    FromBranchId   INT           NOT NULL CONSTRAINT FK_Transfers_From REFERENCES dbo.Branches (Id),
+    ToBranchId     INT           NOT NULL CONSTRAINT FK_Transfers_To REFERENCES dbo.Branches (Id),
+    Status         TINYINT       NOT NULL,  -- 1 Requested, 2 Approved, 3 InTransit, 4 Received, 5 ReceivedWithShortage, 6 Rejected, 7 Cancelled
+    IsDirect       BIT           NOT NULL,  -- MBR-04
+    Note           NVARCHAR(300) NULL,
+    RequestedBy    INT           NOT NULL CONSTRAINT FK_Transfers_RequestedBy REFERENCES dbo.Users (Id),
+    RequestedAtUtc DATETIME2(0)  NOT NULL,
+    ApprovedBy     INT           NULL,
+    ApprovedAtUtc  DATETIME2(0)  NULL,
+    ShippedBy      INT           NULL,
+    ShippedAtUtc   DATETIME2(0)  NULL,
+    ReceivedBy     INT           NULL,
+    ReceivedAtUtc  DATETIME2(0)  NULL,
+    ClosingNote    NVARCHAR(300) NULL,
+    CONSTRAINT CK_Transfers_Locations CHECK (FromBranchId <> ToBranchId)
+);
+CREATE INDEX IX_Transfers_Open ON dbo.Transfers (TenantId, Status) INCLUDE (FromBranchId, ToBranchId);
+
+CREATE TABLE dbo.TransferLines
+(
+    TransferId        INT           NOT NULL CONSTRAINT FK_TransferLines_Transfers REFERENCES dbo.Transfers (Id),
+    LineNumber        INT           NOT NULL,
+    TenantId          INT           NOT NULL,
+    ItemId            INT           NOT NULL CONSTRAINT FK_TransferLines_Items REFERENCES dbo.Items (Id),
+    ItemName          NVARCHAR(200) NOT NULL,
+    RequestedQuantity INT           NOT NULL CONSTRAINT CK_TransferLines_Quantity CHECK (RequestedQuantity > 0),  -- smallest unit
+    CONSTRAINT PK_TransferLines PRIMARY KEY (TransferId, LineNumber)
+);
+
+-- BR-MBR-2: batch number, expiry and cost travel with the stock. While QuantityReceived is NULL the
+-- units are in transit (BR-MBR-1); afterwards QuantitySent - QuantityReceived is the shortage (AC-MBR-1).
+CREATE TABLE dbo.TransferBatches
+(
+    TransferId         INT           NOT NULL CONSTRAINT FK_TransferBatches_Transfers REFERENCES dbo.Transfers (Id),
+    SourceBatchId      INT           NOT NULL CONSTRAINT FK_TransferBatches_Source REFERENCES dbo.Batches (Id),
+    TenantId           INT           NOT NULL,
+    LineNumber         INT           NOT NULL,
+    BatchNumber        NVARCHAR(50)  NOT NULL,
+    ExpiryDate         DATE          NOT NULL,
+    UnitCost           DECIMAL(18,6) NOT NULL,
+    QuantitySent       INT           NOT NULL CONSTRAINT CK_TransferBatches_Sent CHECK (QuantitySent > 0),
+    QuantityReceived   INT           NULL,
+    DestinationBatchId INT           NULL CONSTRAINT FK_TransferBatches_Destination REFERENCES dbo.Batches (Id),
+    CONSTRAINT PK_TransferBatches PRIMARY KEY (TransferId, SourceBatchId),
+    CONSTRAINT CK_TransferBatches_Received CHECK (QuantityReceived IS NULL OR QuantityReceived BETWEEN 0 AND QuantitySent)
+);
 -- #endregion

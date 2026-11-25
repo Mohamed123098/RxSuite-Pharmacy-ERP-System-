@@ -32,6 +32,11 @@ public static class Permissions
     public const string BranchesManage = "branches.manage";
     public const string AuditView = "audit.view";
     public const string ControlledView = "controlled.view";      // CTL-07: read and print the register
+    public const string TransfersRequest = "transfers.request";  // US-MBR-2: ask for stock
+    public const string TransfersApprove = "transfers.approve";  // MBR-03 approve, MBR-04 direct transfers (HQ)
+    public const string TransfersShip = "transfers.ship";        // MBR-03 pick and ship at the source
+    public const string TransfersReceive = "transfers.receive";  // MBR-03 receive at the destination
+    public const string BranchReports = "reports.branches";      // MBR-05/06/08: cross-branch views
 }
 
 #endregion
