@@ -21,7 +21,8 @@ internal sealed class ItemRepository(IDbSession session, ICurrentUser currentUse
         {
             i.Code, i.NameEn, i.NameAr, i.ScientificName, i.Strength, i.DosageForm, i.StripsPerBox,
             i.UnitsPerStrip, i.OfficialPrice, i.SellingPrice, i.VatRate, i.EtaItemCode, i.IsRxOnly,
-            i.IsControlled, i.ReorderLevel, BarcodesJson = Json(barcodes)
+            ControlSchedule = (byte)i.ControlSchedule, i.DrugId, i.ControlledLimitPerPrescription,
+            i.ControlledLimitPerPatient, i.ReorderLevel, BarcodesJson = Json(barcodes)
         }), ct);
 
         i.AssignId(id);

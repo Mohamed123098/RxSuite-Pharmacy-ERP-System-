@@ -151,6 +151,59 @@ END
 GO
 -- #endregion
 
+-- #region Central drug database (BRD 8.6 RX-01, RX-11)
+-- Shared by every tenant and updated centrally, so these tables carry no TenantId.
+-- Doses and limits are per ingredient; strengths are per smallest unit (one tablet, one ml).
+CREATE TABLE dbo.Ingredients
+(
+    Code           NVARCHAR(50)  NOT NULL CONSTRAINT PK_Ingredients PRIMARY KEY,   -- e.g. AMOXICILLIN
+    Name           NVARCHAR(150) NOT NULL,
+    ClassCode      NVARCHAR(50)  NULL,     -- e.g. PENICILLINS: class allergies and duplicate therapy
+    MaxDailyDoseMg DECIMAL(12,3) NULL,
+    MinAgeYears    INT           NULL
+);
+
+CREATE TABLE dbo.Drugs
+(
+    Id                    INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_Drugs PRIMARY KEY,
+    TradeName             NVARCHAR(200) NOT NULL,
+    Strength              NVARCHAR(50)  NOT NULL,
+    DosageForm            NVARCHAR(50)  NOT NULL,
+    AtcCode               NVARCHAR(10)  NULL,
+    Manufacturer          NVARCHAR(150) NULL,
+    EdaRegistrationNumber NVARCHAR(50)  NULL,
+    OfficialPrice         DECIMAL(18,2) NULL,
+    IsRxOnly              BIT           NOT NULL,
+    ControlSchedule       TINYINT       NOT NULL CONSTRAINT DF_Drugs_ControlSchedule DEFAULT (0),  -- 0 None, 1 Narcotic, 2 Psychotropic
+    PregnancyCategory     NVARCHAR(5)   NULL,
+    LabelWarningEn        NVARCHAR(300) NULL,
+    LabelWarningAr        NVARCHAR(300) NULL,
+    UpdatedAtUtc          DATETIME2(0)  NOT NULL CONSTRAINT DF_Drugs_UpdatedAtUtc DEFAULT (SYSUTCDATETIME())
+);
+CREATE INDEX IX_Drugs_TradeName ON dbo.Drugs (TradeName);
+
+CREATE TABLE dbo.DrugIngredients
+(
+    DrugId            INT           NOT NULL CONSTRAINT FK_DrugIngredients_Drugs REFERENCES dbo.Drugs (Id),
+    IngredientCode    NVARCHAR(50)  NOT NULL CONSTRAINT FK_DrugIngredients_Ingredients REFERENCES dbo.Ingredients (Code),
+    StrengthMgPerUnit DECIMAL(12,3) NULL,
+    CONSTRAINT PK_DrugIngredients PRIMARY KEY (DrugId, IngredientCode)
+);
+
+-- RX-02: each pair is stored once, with the codes in alphabetical order.
+CREATE TABLE dbo.DrugInteractions
+(
+    IngredientA    NVARCHAR(50)  NOT NULL CONSTRAINT FK_DrugInteractions_A REFERENCES dbo.Ingredients (Code),
+    IngredientB    NVARCHAR(50)  NOT NULL CONSTRAINT FK_DrugInteractions_B REFERENCES dbo.Ingredients (Code),
+    Severity       TINYINT       NOT NULL CONSTRAINT CK_DrugInteractions_Severity CHECK (Severity BETWEEN 1 AND 4),  -- 1 Minor .. 4 Contraindicated
+    Description    NVARCHAR(500) NOT NULL,
+    Recommendation NVARCHAR(300) NULL,
+    CONSTRAINT PK_DrugInteractions PRIMARY KEY (IngredientA, IngredientB),
+    CONSTRAINT CK_DrugInteractions_Order CHECK (IngredientA < IngredientB)
+);
+CREATE INDEX IX_DrugInteractions_B ON dbo.DrugInteractions (IngredientB);
+-- #endregion
+
 -- #region Catalog and inventory (BRD 8.4)
 CREATE TABLE dbo.Items
 (
@@ -169,7 +222,10 @@ CREATE TABLE dbo.Items
     VatRate        DECIMAL(5,4)  NOT NULL,  -- 0 = exempt, 0.14 = 14%
     EtaItemCode    NVARCHAR(50)  NULL,      -- ACC-02
     IsRxOnly       BIT           NOT NULL,
-    IsControlled   BIT           NOT NULL,
+    ControlSchedule TINYINT      NOT NULL CONSTRAINT DF_Items_ControlSchedule DEFAULT (0),  -- CTL-01: 0 None, 1 Narcotic, 2 Psychotropic
+    DrugId         INT           NULL CONSTRAINT FK_Items_Drugs REFERENCES dbo.Drugs (Id),  -- RX-01
+    ControlledLimitPerPrescription INT NULL,  -- CTL-08, smallest units
+    ControlledLimitPerPatient      INT NULL,  -- CTL-08, smallest units per limit window
     ReorderLevel   INT           NOT NULL,
     IsActive       BIT           NOT NULL CONSTRAINT DF_Items_IsActive DEFAULT (1),
     CONSTRAINT UQ_Items_Tenant_Code UNIQUE (TenantId, Code)
@@ -439,4 +495,203 @@ CREATE TABLE dbo.EtaDocuments
 );
 CREATE INDEX IX_EtaDocuments_Queue ON dbo.EtaDocuments (Status, CreatedAtUtc);
 CREATE INDEX IX_EtaDocuments_Sale ON dbo.EtaDocuments (TenantId, SaleId);
+-- #endregion
+
+-- #region Prescriptions (BRD 8.6)
+CREATE TABLE dbo.Patients
+(
+    Id           INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_Patients PRIMARY KEY,
+    TenantId     INT           NOT NULL CONSTRAINT FK_Patients_Tenants REFERENCES dbo.Tenants (Id),
+    FullName     NVARCHAR(150) NOT NULL,
+    NationalId   NVARCHAR(14)  NULL,
+    Mobile       NVARCHAR(20)  NULL,
+    BirthDate    DATE          NULL,
+    CreatedAtUtc DATETIME2(0)  NOT NULL CONSTRAINT DF_Patients_CreatedAtUtc DEFAULT (SYSUTCDATETIME())
+);
+CREATE INDEX IX_Patients_Name ON dbo.Patients (TenantId, FullName);
+CREATE UNIQUE INDEX UQ_Patients_NationalId ON dbo.Patients (TenantId, NationalId) WHERE NationalId IS NOT NULL;
+
+CREATE TABLE dbo.PatientAllergies
+(
+    PatientId    INT           NOT NULL CONSTRAINT FK_PatientAllergies_Patients REFERENCES dbo.Patients (Id),
+    TenantId     INT           NOT NULL,
+    AllergenCode NVARCHAR(50)  NOT NULL,  -- an ingredient code or a class code
+    Note         NVARCHAR(200) NULL,
+    CONSTRAINT PK_PatientAllergies PRIMARY KEY (PatientId, AllergenCode)
+);
+
+CREATE TABLE dbo.Prescribers
+(
+    Id            INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_Prescribers PRIMARY KEY,
+    TenantId      INT           NOT NULL CONSTRAINT FK_Prescribers_Tenants REFERENCES dbo.Tenants (Id),
+    FullName      NVARCHAR(150) NOT NULL,
+    Specialty     NVARCHAR(100) NULL,
+    LicenceNumber NVARCHAR(50)  NULL,
+    Clinic        NVARCHAR(150) NULL
+);
+CREATE INDEX IX_Prescribers_Name ON dbo.Prescribers (TenantId, FullName);
+
+CREATE TABLE dbo.Prescriptions
+(
+    Id                 INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_Prescriptions PRIMARY KEY,
+    TenantId           INT           NOT NULL,
+    BranchId           INT           NOT NULL CONSTRAINT FK_Prescriptions_Branches REFERENCES dbo.Branches (Id),
+    PatientId          INT           NOT NULL CONSTRAINT FK_Prescriptions_Patients REFERENCES dbo.Patients (Id),
+    PrescriberId       INT           NOT NULL CONSTRAINT FK_Prescriptions_Prescribers REFERENCES dbo.Prescribers (Id),
+    PrescriptionNumber NVARCHAR(50)  NULL,
+    PrescribedOn       DATE          NOT NULL,
+    Diagnosis          NVARCHAR(300) NULL,
+    Status             TINYINT       NOT NULL,  -- 1 Open, 2 PartiallyDispensed, 3 Completed, 4 Cancelled
+    RecordedBy         INT           NOT NULL CONSTRAINT FK_Prescriptions_Users REFERENCES dbo.Users (Id),
+    RecordedAtUtc      DATETIME2(0)  NOT NULL
+);
+CREATE INDEX IX_Prescriptions_Patient ON dbo.Prescriptions (TenantId, PatientId);
+CREATE INDEX IX_Prescriptions_Open ON dbo.Prescriptions (TenantId, Status) WHERE Status IN (1, 2);
+
+CREATE TABLE dbo.PrescriptionLines
+(
+    PrescriptionId     INT           NOT NULL CONSTRAINT FK_PrescriptionLines_Prescriptions REFERENCES dbo.Prescriptions (Id),
+    LineNumber         INT           NOT NULL,
+    TenantId           INT           NOT NULL,
+    ItemId             INT           NOT NULL CONSTRAINT FK_PrescriptionLines_Items REFERENCES dbo.Items (Id),
+    ItemName           NVARCHAR(200) NOT NULL,
+    Unit               TINYINT       NOT NULL,
+    Quantity           INT           NOT NULL CONSTRAINT CK_PrescriptionLines_Quantity CHECK (Quantity > 0),
+    RefillsAllowed     INT           NOT NULL CONSTRAINT CK_PrescriptionLines_Refills CHECK (RefillsAllowed BETWEEN 0 AND 12),
+    BaseUnitsPerUnit   INT           NOT NULL,
+    DoseUnits          DECIMAL(9,3)  NULL,
+    FrequencyPerDay    INT           NULL,
+    DurationDays       INT           NULL,
+    Instructions       NVARCHAR(300) NULL,
+    DispensedBaseUnits INT           NOT NULL CONSTRAINT DF_PrescriptionLines_Dispensed DEFAULT (0),
+    CONSTRAINT PK_PrescriptionLines PRIMARY KEY (PrescriptionId, LineNumber),
+    -- RX-06: the final guard against dispensing more than the first fill plus the refills.
+    CONSTRAINT CK_PrescriptionLines_Dispensed
+        CHECK (DispensedBaseUnits >= 0 AND DispensedBaseUnits <= Quantity * (1 + RefillsAllowed) * BaseUnitsPerUnit)
+);
+
+-- RX-05 / BR-RX-3: the image itself is stored encrypted outside the database; this is its index.
+CREATE TABLE dbo.PrescriptionImages
+(
+    Id             INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_PrescriptionImages PRIMARY KEY,
+    TenantId       INT           NOT NULL,
+    PrescriptionId INT           NOT NULL CONSTRAINT FK_PrescriptionImages_Prescriptions REFERENCES dbo.Prescriptions (Id),
+    StorageKey     NVARCHAR(200) NOT NULL,
+    ContentType    NVARCHAR(50)  NOT NULL,
+    SizeBytes      INT           NOT NULL,
+    UploadedBy     INT           NOT NULL CONSTRAINT FK_PrescriptionImages_Users REFERENCES dbo.Users (Id),
+    UploadedAtUtc  DATETIME2(0)  NOT NULL
+);
+
+CREATE TABLE dbo.Dispenses
+(
+    Id                  BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT PK_Dispenses PRIMARY KEY,
+    TenantId            INT            NOT NULL,
+    BranchId            INT            NOT NULL CONSTRAINT FK_Dispenses_Branches REFERENCES dbo.Branches (Id),
+    PrescriptionId      INT            NULL CONSTRAINT FK_Dispenses_Prescriptions REFERENCES dbo.Prescriptions (Id),
+    PatientId           INT            NULL CONSTRAINT FK_Dispenses_Patients REFERENCES dbo.Patients (Id),
+    SaleId              BIGINT         NOT NULL CONSTRAINT FK_Dispenses_Sales REFERENCES dbo.Sales (Id),
+    PharmacistId        INT            NOT NULL CONSTRAINT FK_Dispenses_Users REFERENCES dbo.Users (Id),
+    CounsellingNote     NVARCHAR(1000) NULL,  -- RX-10
+    PrescriptionPending BIT            NOT NULL, -- BR-RX-1 "record later"
+    DispensedAtUtc      DATETIME2(0)   NOT NULL
+);
+CREATE INDEX IX_Dispenses_Patient ON dbo.Dispenses (TenantId, PatientId, DispensedAtUtc DESC);
+CREATE INDEX IX_Dispenses_Sale ON dbo.Dispenses (TenantId, SaleId);
+
+CREATE TABLE dbo.DispenseLines
+(
+    DispenseId             BIGINT NOT NULL CONSTRAINT FK_DispenseLines_Dispenses REFERENCES dbo.Dispenses (Id),
+    SaleLineNumber         INT    NOT NULL,
+    TenantId               INT    NOT NULL,
+    PrescriptionLineNumber INT    NULL,
+    ItemId                 INT    NOT NULL,
+    BaseUnits              INT    NOT NULL,
+    CONSTRAINT PK_DispenseLines PRIMARY KEY (DispenseId, SaleLineNumber)
+);
+
+-- Key data "Dispense": the alerts shown and the overrides with their reasons (RX-03, BR-RX-2).
+CREATE TABLE dbo.DispenseAlerts
+(
+    Id             BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT PK_DispenseAlerts PRIMARY KEY,
+    DispenseId     BIGINT        NOT NULL CONSTRAINT FK_DispenseAlerts_Dispenses REFERENCES dbo.Dispenses (Id),
+    TenantId       INT           NOT NULL,
+    Code           NVARCHAR(150) NOT NULL,
+    Type           TINYINT       NOT NULL,
+    Severity       TINYINT       NOT NULL,
+    Message        NVARCHAR(600) NOT NULL,
+    OverrideReason NVARCHAR(500) NULL
+);
+-- #endregion
+
+-- #region Controlled drugs register (BRD 8.7)
+CREATE TABLE dbo.ControlledRegister
+(
+    Id                  BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT PK_ControlledRegister PRIMARY KEY,
+    TenantId            INT           NOT NULL,
+    BranchId            INT           NOT NULL CONSTRAINT FK_ControlledRegister_Branches REFERENCES dbo.Branches (Id),
+    ItemId              INT           NOT NULL CONSTRAINT FK_ControlledRegister_Items REFERENCES dbo.Items (Id),
+    BatchId             INT           NULL CONSTRAINT FK_ControlledRegister_Batches REFERENCES dbo.Batches (Id),
+    Type                TINYINT       NOT NULL,  -- 1 Purchase, 2 Dispense, 3 Destruction, 4 Adjustment, 5 Correction
+    Quantity            INT           NOT NULL,  -- signed, smallest unit
+    Balance             INT           NOT NULL CONSTRAINT CK_ControlledRegister_Balance CHECK (Balance >= 0),
+    OccurredAtUtc       DATETIME2(0)  NOT NULL,
+    DocumentType        NVARCHAR(30)  NOT NULL,
+    DocumentId          BIGINT        NOT NULL,
+    PatientId           INT           NULL,
+    PatientName         NVARCHAR(150) NULL,
+    PatientNationalId   NVARCHAR(14)  NULL,
+    PrescriberName      NVARCHAR(150) NULL,
+    PrescriberLicence   NVARCHAR(50)  NULL,
+    PrescriptionId      INT           NULL,
+    PrescriptionNumber  NVARCHAR(50)  NULL,
+    PrescriptionDate    DATE          NULL,
+    PrescriptionImageId INT           NULL,
+    PharmacistId        INT           NOT NULL CONSTRAINT FK_ControlledRegister_Users REFERENCES dbo.Users (Id),
+    CorrectsEntryId     BIGINT        NULL CONSTRAINT FK_ControlledRegister_Corrects REFERENCES dbo.ControlledRegister (Id),
+    Note                NVARCHAR(500) NULL,
+    RecordedAtUtc       DATETIME2(0)  NOT NULL CONSTRAINT DF_ControlledRegister_RecordedAtUtc DEFAULT (SYSUTCDATETIME())
+);
+CREATE INDEX IX_ControlledRegister_Item ON dbo.ControlledRegister (TenantId, BranchId, ItemId, Id);
+CREATE INDEX IX_ControlledRegister_Patient ON dbo.ControlledRegister (TenantId, PatientId, ItemId, OccurredAtUtc)
+    WHERE PatientId IS NOT NULL;
+GO
+
+-- CTL-05 / BR-CTL-2: register entries cannot be changed or deleted by any role, Owner included.
+CREATE TRIGGER dbo.TR_ControlledRegister_Immutable ON dbo.ControlledRegister
+INSTEAD OF UPDATE, DELETE
+AS
+BEGIN
+    SET NOCOUNT ON;
+    THROW 51001, 'Controlled register entries are append-only: add a correction entry instead.', 1;
+END
+GO
+
+-- CTL-06: signed weekly counts of the locked cabinet.
+CREATE TABLE dbo.ControlledBalanceChecks
+(
+    Id              INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_ControlledBalanceChecks PRIMARY KEY,
+    TenantId        INT           NOT NULL,
+    BranchId        INT           NOT NULL CONSTRAINT FK_ControlledBalanceChecks_Branches REFERENCES dbo.Branches (Id),
+    ItemId          INT           NOT NULL CONSTRAINT FK_ControlledBalanceChecks_Items REFERENCES dbo.Items (Id),
+    CountedQuantity INT           NOT NULL,
+    RegisterBalance INT           NOT NULL,
+    StockQuantity   INT           NOT NULL,
+    IsMismatch      BIT           NOT NULL,
+    PharmacistId    INT           NOT NULL CONSTRAINT FK_ControlledBalanceChecks_Users REFERENCES dbo.Users (Id),
+    Note            NVARCHAR(500) NULL,
+    CheckedAtUtc    DATETIME2(0)  NOT NULL
+);
+CREATE INDEX IX_ControlledBalanceChecks_Item ON dbo.ControlledBalanceChecks (TenantId, BranchId, ItemId, CheckedAtUtc DESC);
+GO
+
+-- A signed count is evidence for the inspector: it cannot be changed either.
+CREATE TRIGGER dbo.TR_ControlledBalanceChecks_Immutable ON dbo.ControlledBalanceChecks
+INSTEAD OF UPDATE, DELETE
+AS
+BEGIN
+    SET NOCOUNT ON;
+    THROW 51002, 'Balance checks are signed records and cannot be changed or deleted.', 1;
+END
+GO
 -- #endregion

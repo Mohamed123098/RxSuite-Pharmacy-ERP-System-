@@ -31,6 +31,7 @@ public static class Permissions
     public const string SubscriptionManage = "subscription.manage";
     public const string BranchesManage = "branches.manage";
     public const string AuditView = "audit.view";
+    public const string ControlledView = "controlled.view";      // CTL-07: read and print the register
 }
 
 #endregion

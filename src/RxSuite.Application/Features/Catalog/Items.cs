@@ -7,7 +7,8 @@ using RxSuite.Domain.Identity;
 namespace RxSuite.Application.Features.Catalog;
 
 // USE CASES: the item master (INV-01, INV-02), price changes (BR-POS-2, AC-USR-3) and the POS
-// item search (POS-01, POS-02).
+// item search (POS-01, POS-02). An item can be linked to the central drug database (RX-01), which
+// then decides whether it is Rx-only and which control table it is on (CTL-01).
 
 #region Read model
 
@@ -38,10 +39,11 @@ public sealed class ItemSearchResult
 [RequiresPermission(Permissions.ItemsManage)]
 public sealed record CreateItemCommand(string Code, string NameEn, string NameAr, string ScientificName,
     string Strength, string DosageForm, int StripsPerBox, int UnitsPerStrip, decimal? OfficialPrice,
-    decimal SellingPrice, decimal VatRate, string? EtaItemCode, bool IsRxOnly, bool IsControlled,
-    int ReorderLevel, IReadOnlyList<string>? Barcodes) : ICommand<int>;
+    decimal SellingPrice, decimal VatRate, string? EtaItemCode, bool IsRxOnly, ControlSchedule ControlSchedule,
+    int ReorderLevel, IReadOnlyList<string>? Barcodes, int? DrugId = null, int? ControlledLimitPerPrescription = null,
+    int? ControlledLimitPerPatient = null) : ICommand<int>;
 
-internal sealed class CreateItemHandler(IItemRepository items, ICurrentUser currentUser, IAuditTrail audit)
+internal sealed class CreateItemHandler(IItemRepository items, IDrugRepository drugs, ICurrentUser currentUser, IAuditTrail audit)
     : IRequestHandler<CreateItemCommand, int>
 {
     public async Task<Result<int>> HandleAsync(CreateItemCommand c, CancellationToken ct)
@@ -49,10 +51,22 @@ internal sealed class CreateItemHandler(IItemRepository items, ICurrentUser curr
         if (await items.CodeExistsAsync(c.Code.Trim(), ct))
             return Error.Conflict("Item.CodeTaken", $"Item code '{c.Code}' is already used.");
 
+        // RX-01 / CTL-01: the central database is the authority on Rx status and control tables.
+        var isRxOnly = c.IsRxOnly;
+        var schedule = c.ControlSchedule;
+        if (c.DrugId is { } drugId)
+        {
+            var drug = await drugs.GetDrugAsync(drugId, ct);
+            if (drug is null) return Errors.NotFound("Drug", drugId);
+            isRxOnly |= drug.IsRxOnly;
+            if (drug.ControlSchedule != ControlSchedule.None) schedule = drug.ControlSchedule;
+        }
+
         var item = Item.Create(currentUser.TenantId, c.Code, c.NameEn, c.NameAr, c.ScientificName, c.Strength,
             c.DosageForm, c.StripsPerBox, c.UnitsPerStrip, c.OfficialPrice, c.SellingPrice, c.VatRate,
-            c.EtaItemCode, c.IsRxOnly, c.IsControlled, c.ReorderLevel,
-            allowAboveOfficialPrice: currentUser.Has(Permissions.PricesAboveOfficial));
+            c.EtaItemCode, isRxOnly, schedule, c.ReorderLevel,
+            allowAboveOfficialPrice: currentUser.Has(Permissions.PricesAboveOfficial), drugId: c.DrugId,
+            controlledLimitPerPrescription: c.ControlledLimitPerPrescription, controlledLimitPerPatient: c.ControlledLimitPerPatient);
 
         var barcodes = (c.Barcodes ?? []).Select(b => b.Trim()).Where(b => b.Length > 0).Distinct();
         var id = await items.AddAsync(item, barcodes, ct);

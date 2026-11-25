@@ -67,3 +67,20 @@ public interface IEtaGateway
 }
 
 #endregion
+
+#region Prescription images (RX-05, BR-RX-3)
+
+/// <summary>
+/// ADAPTER port for storing prescription images. BR-RX-3: images are health data, so the store
+/// keeps them encrypted; reading one is logged by the use case that asks for it.
+/// </summary>
+public interface IPrescriptionImageStore
+{
+    /// <summary>Encrypts and stores the image, and returns the key to find it again.</summary>
+    Task<string> SaveAsync(int tenantId, byte[] content, CancellationToken cancellationToken);
+
+    /// <summary>Reads and decrypts an image of the tenant.</summary>
+    Task<byte[]> ReadAsync(int tenantId, string storageKey, CancellationToken cancellationToken);
+}
+
+#endregion

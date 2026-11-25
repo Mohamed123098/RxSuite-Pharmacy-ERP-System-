@@ -44,7 +44,7 @@ public sealed record SaleReturnDto(long Id, long SaleId, decimal RefundTotal, Re
 
 internal sealed class ReturnSaleHandler(
     ISaleRepository sales, IShiftRepository shifts, IStockRepository stock, IEtaDocumentRepository etaDocuments,
-    IAuditTrail audit, ICurrentUser currentUser, IClock clock, BusinessRules rules)
+    IItemRepository items, IAuditTrail audit, ICurrentUser currentUser, IClock clock, BusinessRules rules)
     : IRequestHandler<ReturnSaleCommand, SaleReturnDto>
 {
     public async Task<Result<SaleReturnDto>> HandleAsync(ReturnSaleCommand c, CancellationToken ct)
@@ -56,6 +56,11 @@ internal sealed class ReturnSaleHandler(
         var sale = await sales.GetByIdAsync(c.SaleId, ct);
         if (sale is null) return Errors.NotFound("Sale", c.SaleId);
         if (!currentUser.CanAccessBranch(sale.BranchId)) return Errors.BranchNotAllowed;
+
+        // Controlled medicines do not come back over the counter: the register would need a patient
+        // return entry that the BRD does not define. A pharmacist records them with a stock adjustment.
+        var returnedItemIds = sale.Lines.Where(l => c.Lines.Any(r => r.LineNumber == l.LineNumber)).Select(l => l.ItemId).Distinct();
+        if ((await items.GetByIdsAsync(returnedItemIds, ct)).Any(i => i.IsControlled)) return Errors.ControlledReturn;
 
         // The refund leaves the drawer of the cashier's open shift.
         var shift = await shifts.GetOpenAsync(sale.BranchId, currentUser.UserId, ct);

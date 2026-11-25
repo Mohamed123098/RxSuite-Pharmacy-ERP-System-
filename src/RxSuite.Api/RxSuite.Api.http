@@ -45,7 +45,7 @@ Content-Type: application/json
 {
   "code": "PARA500", "nameEn": "Paracetamol 500mg", "nameAr": "باراسيتامول ٥٠٠", "scientificName": "Paracetamol",
   "strength": "500mg", "dosageForm": "Tablet", "stripsPerBox": 3, "unitsPerStrip": 10, "officialPrice": 90,
-  "sellingPrice": 90, "vatRate": 0, "etaItemCode": "EG-000-1", "isRxOnly": false, "isControlled": false,
+  "sellingPrice": 90, "vatRate": 0, "etaItemCode": "EG-000-1", "isRxOnly": false, "controlSchedule": "None",
   "reorderLevel": 60, "barcodes": ["6221234567890"]
 }
 
@@ -109,4 +109,110 @@ Authorization: Bearer {{token}}
 
 ###
 GET {{host}}/api/audit-log?pageSize=20
+Authorization: Bearer {{token}}
+
+### ===== BRD 8.6 Prescriptions and 8.7 Controlled drugs =====
+# Log in as the pharmacist for these: the owner is not a licensed pharmacist.
+
+### 14. Find a medicine in the central drug database (sample data in 002_Seed.sql)
+GET {{host}}/api/drugs?term=amox
+Authorization: Bearer {{token}}
+
+### 15. Item linked to the drug database: Rx status and control table come from it (owner)
+POST {{host}}/api/items
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "code": "AMX500", "nameEn": "Amoxicillin 500", "nameAr": "أموكسيسيلين 500", "scientificName": "Amoxicillin",
+  "strength": "500mg", "dosageForm": "Capsule", "stripsPerBox": 2, "unitsPerStrip": 8, "officialPrice": 120,
+  "sellingPrice": 120, "vatRate": 0, "isRxOnly": false, "controlSchedule": "None", "reorderLevel": 0, "drugId": 1
+}
+
+### 16. Patient with a penicillin allergy (US-RX-3)
+POST {{host}}/api/patients
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "fullName": "Mona Ali", "nationalId": "29001011234567", "mobile": "01011111111", "birthDate": "1990-01-01",
+  "allergies": [ { "allergenCode": "PENICILLINS", "note": "rash" } ] }
+
+### 17. Prescriber
+POST {{host}}/api/prescribers
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "fullName": "Dr Hany", "specialty": "GP", "licenceNumber": "LIC-77", "clinic": "Al Nour Clinic" }
+
+### 18. Alerts panel before recording (AC-RX-1: allergy alert)
+POST {{host}}/api/clinical-checks
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "patientId": 1, "items": [ { "itemId": 2, "doseUnits": 1, "frequencyPerDay": 3 } ] }
+
+### 19. Record the prescription: 3 boxes, no refills. The response carries the alerts.
+POST {{host}}/api/prescriptions
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "branchId": 1, "patientId": 1, "prescriberId": 1, "prescriptionNumber": "RX-100", "prescribedOn": "2026-11-25",
+  "diagnosis": "Tonsillitis",
+  "lines": [ { "itemId": 2, "unit": "Box", "quantity": 3, "refillsAllowed": 0, "doseUnits": 1, "frequencyPerDay": 3, "durationDays": 7 } ] }
+
+### 20. Attach the prescription photo (stored encrypted; set PrescriptionImages:Key first)
+POST {{host}}/api/prescriptions/1/images
+Authorization: Bearer {{token}}
+Content-Type: multipart/form-data; boundary=rx
+
+--rx
+Content-Disposition: form-data; name="file"; filename="rx.jpg"
+Content-Type: image/jpeg
+
+< ./rx.jpg
+--rx--
+
+### 21. Dispense 1 box at the till. The allergy alert needs an override with a reason (BR-RX-2).
+#     Use the alert code returned by step 19.
+POST {{host}}/api/sales
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "branchId": 1, "prescriptionId": 1,
+  "lines": [ { "itemId": 2, "unit": "Box", "quantity": 1 } ],
+  "payments": [ { "method": "Cash", "amount": 200 } ],
+  "alertOverrides": [ { "alertCode": "ALLERGY:2:AMOXICILLIN", "reason": "Prescriber confirmed by phone" } ],
+  "counsellingNote": "Take after meals, finish the course"
+}
+
+### 22. AC-RX-2: the prescription now shows 2 boxes remaining
+GET {{host}}/api/prescriptions/1
+Authorization: Bearer {{token}}
+
+### 23. Labels in Arabic and English for that sale (RX-07)
+GET {{host}}/api/sales/2/labels
+Authorization: Bearer {{token}}
+
+### 24. Patient profile: allergies, history from every branch, what is still to collect (RX-08)
+GET {{host}}/api/patients/1
+Authorization: Bearer {{token}}
+
+### 25. Controlled register of an item, and its CSV for the inspector (CTL-04, CTL-07)
+GET {{host}}/api/controlled-register?branchId=1&itemId=3&from=2026-11-01&to=2026-11-30
+Authorization: Bearer {{token}}
+
+###
+GET {{host}}/api/controlled-register/export?branchId=1&itemId=3&from=2026-11-01&to=2026-11-30
+Authorization: Bearer {{token}}
+
+### 26. Weekly count of the locked cabinet, signed with the pharmacist's own PIN (CTL-06)
+POST {{host}}/api/controlled-register/balance-checks
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "branchId": 1, "itemId": 3, "countedQuantity": 40, "pin": "2222", "note": null }
+
+### 27. Owner's alerts: mismatches and overdue counts (US-CTL-3)
+GET {{host}}/api/controlled-register/status?branchId=1&onlyNeedingAttention=true
 Authorization: Bearer {{token}}

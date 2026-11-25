@@ -1,6 +1,8 @@
 using RxSuite.Application.Abstractions;
 using RxSuite.Application.Common;
 using RxSuite.Domain.Catalog;
+using RxSuite.Domain.Clinical;
+using RxSuite.Domain.Controlled;
 using RxSuite.Domain.Common;
 using RxSuite.Domain.Identity;
 using RxSuite.Domain.Inventory;
@@ -11,7 +13,9 @@ using RxSuite.Domain.Tax;
 namespace RxSuite.Application.Features.Sales;
 
 // USE CASE (Figure 2 "POS sale flow"): complete a sale at the counter.
-// Covers POS-03/04/05/07/10/13, BR-POS-1/3/4/5/6, AC-POS-2/3/4, AC-USR-1, BR-USR-4.
+// Covers POS-03/04/05/07/10/13, BR-POS-1/3/4/5/6, AC-POS-2/3/4, AC-USR-1, BR-USR-4, and the
+// dispensing rules of BRD 8.6/8.7 through the DispensingPlanner: BR-RX-1/2, RX-02/03/06/10,
+// CTL-02/03/04/08, AC-RX-2, AC-CTL-1.
 // Not built yet: customer, insurance and loyalty on the sale (POS-09), price override (POS-08),
 // selling with negative stock by manager PIN (POS-06: this build always blocks).
 
@@ -43,7 +47,10 @@ internal static class SaleMappings
 
 #region Command
 
-public sealed record SaleLineRequest(int ItemId, UnitType Unit, int Quantity, decimal DiscountPercent = 0, int? BatchId = null);
+/// <param name="PrescriptionLineNumber">The prescription line this sale line serves (RX-06). Linked automatically
+/// when exactly one open line of the prescription is for the same item.</param>
+public sealed record SaleLineRequest(int ItemId, UnitType Unit, int Quantity, decimal DiscountPercent = 0, int? BatchId = null,
+    int? PrescriptionLineNumber = null);
 
 public sealed record PaymentRequest(PaymentMethod Method, decimal Amount, string? Reference = null);
 
@@ -51,11 +58,15 @@ public sealed record BuyerRequest(string? Name, string? NationalId, string? TaxN
 
 /// <param name="OfflineId">BR-POS-5: the terminal's unique ID for a sale made offline.</param>
 /// <param name="DiscountApproval">Manager PIN when the discount is above the cashier's limit.</param>
-/// <param name="PharmacistApproval">Pharmacist PIN when the cashier is not a licensed pharmacist.</param>
+/// <param name="PharmacistApproval">Pharmacist PIN when the cashier is not a licensed pharmacist (not enough for controlled items).</param>
+/// <param name="PrescriptionId">The recorded prescription being dispensed (BR-RX-1, RX-06).</param>
+/// <param name="AlertOverrides">BR-RX-2: the pharmacist's reason for each major or contraindicated alert.</param>
+/// <param name="CounsellingNote">RX-10: optional counselling notes for this dispense.</param>
 [RequiresPermission(Permissions.PosSell)]
 public sealed record CreateSaleCommand(int BranchId, IReadOnlyList<SaleLineRequest> Lines,
     IReadOnlyList<PaymentRequest> Payments, decimal InvoiceDiscountPercent = 0, BuyerRequest? Buyer = null,
-    Guid? OfflineId = null, ManagerOverride? DiscountApproval = null, ManagerOverride? PharmacistApproval = null)
+    Guid? OfflineId = null, ManagerOverride? DiscountApproval = null, ManagerOverride? PharmacistApproval = null,
+    int? PrescriptionId = null, IReadOnlyList<AlertOverride>? AlertOverrides = null, string? CounsellingNote = null)
     : ICommand<SaleReceiptDto>;
 
 internal sealed class CreateSaleValidator : IValidator<CreateSaleCommand>
@@ -81,7 +92,8 @@ internal sealed class CreateSaleValidator : IValidator<CreateSaleCommand>
 internal sealed class CreateSaleHandler(
     ISaleRepository sales, IShiftRepository shifts, IItemRepository items, IStockRepository stock,
     IEtaDocumentRepository etaDocuments, IUserRepository users, IOverrideAuthorizer overrides,
-    IAuditTrail audit, ICurrentUser currentUser, IClock clock, BusinessRules rules)
+    IDispensingPlanner dispensing, IPrescriptionRepository prescriptions, IDispenseRepository dispenses,
+    IControlledRegisterRepository register, IAuditTrail audit, ICurrentUser currentUser, IClock clock, BusinessRules rules)
     : IRequestHandler<CreateSaleCommand, SaleReceiptDto>
 {
     public async Task<Result<SaleReceiptDto>> HandleAsync(CreateSaleCommand c, CancellationToken ct)
@@ -145,15 +157,17 @@ internal sealed class CreateSaleHandler(
 
         #endregion
 
-        #region 4. Pharmacist for Rx-only and controlled items (BR-USR-4)
+        #region 4. Pharmacist for Rx-only and controlled items (BR-USR-4), then the dispensing rules
 
         int? pharmacistId = null;
-        if (c.Lines.Any(l => itemsById[l.ItemId].RequiresPharmacist))
+        var sellerIsPharmacist = false;
+        if (c.PrescriptionId is not null || c.Lines.Any(l => itemsById[l.ItemId].RequiresPharmacist))
         {
             var cashier = await users.GetByIdAsync(currentUser.UserId, ct);
+            sellerIsPharmacist = cashier is not null && cashier.CanActAsPharmacist(clock.Today) && currentUser.Has(Permissions.RxDispense);
 
-            if (cashier is not null && cashier.CanActAsPharmacist(clock.Today) && currentUser.Has(Permissions.RxDispense))
-                pharmacistId = cashier.Id;
+            if (sellerIsPharmacist)
+                pharmacistId = cashier!.Id;
             else
             {
                 var approval = await overrides.AuthorizePharmacistAsync(c.PharmacistApproval, ct);
@@ -161,6 +175,10 @@ internal sealed class CreateSaleHandler(
                 pharmacistId = approval.Value.Id;
             }
         }
+
+        // BRD 8.6 / 8.7: prescription link, clinical alerts and overrides, controlled rules.
+        var plan = await dispensing.PlanAsync(c, itemsById, pharmacistId, sellerIsPharmacist, ct);
+        if (plan.IsFailure) return plan.Error;
 
         #endregion
 
@@ -192,7 +210,46 @@ internal sealed class CreateSaleHandler(
 
         #endregion
 
+        #region 7. Save the dispense: prescription progress, dispense record, controlled register
+
+        var result = await SaveDispensingAsync(plan.Value, sale, itemsById, pharmacistId, ct);
+        if (result.IsFailure) return result.Error;
+
+        #endregion
+
         return sale.ToReceipt(document);
+    }
+
+    /// <summary>RX-06, RX-10, BR-RX-2 and CTL-04 / AC-CTL-1, in the sale's transaction.</summary>
+    private async Task<Result<Unit>> SaveDispensingAsync(DispensingPlan plan, Sale sale, IReadOnlyDictionary<int, Item> itemsById,
+        int? pharmacistId, CancellationToken ct)
+    {
+        if (plan.Prescription is { } prescription) await prescriptions.UpdateAsync(prescription, ct);
+
+        if (plan.Dispense is { } dispense)
+        {
+            dispense.AttachSale(sale.Id);
+            await dispenses.AddAsync(dispense, ct);
+
+            if (dispense.Overrides.Count > 0)
+                await audit.RecordAsync("Clinical", "AlertOverridden", sale.Id,
+                    newValue: string.Join(", ", dispense.Overrides.Select(o => o.AlertCode)),
+                    reason: string.Join(" | ", dispense.Overrides.Select(o => o.Reason)), branchId: sale.BranchId, ct: ct);
+
+            if (dispense.PrescriptionPending)
+                await audit.RecordAsync("Clinical", "PrescriptionPending", sale.Id,
+                    reason: "Rx-only item sold before the prescription was recorded (BR-RX-1)", branchId: sale.BranchId, ct: ct);
+        }
+
+        // AC-CTL-1: one register entry per batch the controlled line was taken from.
+        var entries = sale.Lines
+            .Where(l => itemsById[l.ItemId].IsControlled)
+            .SelectMany(l => l.Allocations.Select(a => ControlledRegisterEntry.ForDispense(sale.TenantId, sale.BranchId,
+                l.ItemId, a.BatchId, a.Quantity, sale.Id, plan.Party!, pharmacistId!.Value, sale.SoldAtUtc)))
+            .ToList();
+
+        if (entries.Count > 0 && !await register.AddEntriesAsync(entries, ct)) return Errors.RegisterNegative;
+        return Unit.Value;
     }
 }
 

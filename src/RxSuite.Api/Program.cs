@@ -7,6 +7,7 @@ using RxSuite.Application;
 using RxSuite.Application.Abstractions;
 using RxSuite.Domain.Rules;
 using RxSuite.Infrastructure;
+using RxSuite.Infrastructure.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -57,7 +58,8 @@ builder.Services.AddSingleton(provider => provider.GetRequiredService<IOptions<B
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(
     builder.Configuration.GetConnectionString("Default")
-    ?? throw new InvalidOperationException("Connection string 'Default' is not configured."));
+    ?? throw new InvalidOperationException("Connection string 'Default' is not configured."),
+    builder.Configuration.GetSection(PrescriptionImageOptions.SectionName).Get<PrescriptionImageOptions>());
 
 #endregion
 

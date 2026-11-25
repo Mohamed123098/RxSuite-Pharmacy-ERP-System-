@@ -61,6 +61,21 @@ public static class Errors
         "Stock changed while the operation was running. Nothing was saved; please try again.");
 
     #endregion
+
+    #region Prescriptions and controlled drugs (BRD 8.6, 8.7)
+
+    public static readonly Error PharmacistOnly = Error.Forbidden("Controlled.PharmacistOnly",
+        "Only a logged-in pharmacist with a valid licence can do this (CTL-02).");
+    public static Error PrescriptionRequired(string itemName) => Error.Conflict("Rx.PrescriptionRequired",
+        $"{itemName} needs a recorded prescription before it can be dispensed.");
+    public static Error OverrideRequired(IEnumerable<string> alertCodes) => Error.Conflict("Clinical.OverrideRequired",
+        $"These alerts need a pharmacist override with a reason: {string.Join(", ", alertCodes)}.");
+    public static readonly Error RegisterNegative = Error.Conflict("Controlled.RegisterNegative",
+        "The controlled register balance would go below zero. Record the opening balance with a stock adjustment first.");
+    public static readonly Error ControlledReturn = Error.Conflict("Controlled.NoCounterReturn",
+        "Controlled medicines cannot be returned at the counter. Record them with a stock adjustment by a pharmacist.");
+
+    #endregion
 }
 
 #endregion

@@ -2,6 +2,8 @@ using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using RxSuite.Application.Abstractions;
 using RxSuite.Application.Common;
+using RxSuite.Application.Features.Clinical;
+using RxSuite.Application.Features.Sales;
 using RxSuite.Application.Pipeline;
 
 namespace RxSuite.Application;
@@ -62,6 +64,9 @@ public static class DependencyInjection
     {
         services.AddScoped<IAuditTrail, AuditTrail>();
         services.AddScoped<IOverrideAuthorizer, OverrideAuthorizer>();
+        services.AddScoped<IPharmacistCheck, PharmacistCheck>();
+        services.AddScoped<IClinicalCheckService, ClinicalCheckService>();
+        services.AddScoped<IDispensingPlanner, DispensingPlanner>();
     }
 
     #endregion

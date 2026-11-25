@@ -1,11 +1,15 @@
 using RxSuite.Application.Common;
 using RxSuite.Application.Features.Catalog;
+using RxSuite.Application.Features.Clinical;
+using RxSuite.Application.Features.Controlled;
 using RxSuite.Application.Features.Identity;
 using RxSuite.Application.Features.Inventory;
 using RxSuite.Application.Features.Platform;
 using RxSuite.Application.Features.Purchasing;
 using RxSuite.Application.Features.Tax;
 using RxSuite.Domain.Catalog;
+using RxSuite.Domain.Clinical;
+using RxSuite.Domain.Controlled;
 using RxSuite.Domain.Identity;
 using RxSuite.Domain.Inventory;
 using RxSuite.Domain.Platform;
@@ -177,6 +181,103 @@ public interface IEtaDocumentRepository
     /// <summary>The oldest queued documents of all tenants (ACC-07).</summary>
     Task<IReadOnlyList<EtaDocument>> GetQueuedAsync(int max, CancellationToken ct);
     Task<PagedResult<EtaDocumentDto>> GetPagedAsync(EtaDocumentStatus? status, int pageNumber, int pageSize, CancellationToken ct);
+}
+
+#endregion
+
+#region Drug database and clinical data (BRD 8.6)
+
+/// <summary>
+/// The central drug database (RX-01). It is shared by every tenant and updated centrally (RX-11),
+/// so its procedures take no tenant; the tenant's items are matched to it through Item.DrugId.
+/// </summary>
+public interface IDrugRepository
+{
+    Task<DrugDto?> GetDrugAsync(int drugId, CancellationToken ct);
+    Task<IReadOnlyList<DrugDto>> SearchDrugsAsync(string term, CancellationToken ct);
+
+    /// <summary>The ingredients behind the tenant's items. Items not linked to a central drug are left out.</summary>
+    Task<IReadOnlyList<ItemClinicalProfile>> GetClinicalProfilesAsync(IEnumerable<int> itemIds, CancellationToken ct);
+
+    /// <summary>Every known interaction in which at least two of the given ingredients take part.</summary>
+    Task<IReadOnlyList<DrugInteraction>> GetInteractionsAsync(IEnumerable<string> ingredientCodes, CancellationToken ct);
+}
+
+public interface IPatientRepository
+{
+    Task<int> AddAsync(Patient patient, CancellationToken ct);
+    Task<Patient?> GetByIdAsync(int patientId, CancellationToken ct);
+    Task<bool> NationalIdExistsAsync(string nationalId, CancellationToken ct);
+    Task AddAllergyAsync(int patientId, PatientAllergy allergy, CancellationToken ct);
+    Task<IReadOnlyList<PatientSummaryDto>> SearchAsync(string term, CancellationToken ct);
+
+    /// <summary>RX-02: items dispensed to the patient since the date, in any branch, except from one prescription.</summary>
+    Task<IReadOnlyList<int>> GetCurrentMedicationItemIdsAsync(int patientId, DateTime sinceUtc, int? exceptPrescriptionId,
+        CancellationToken ct);
+
+    /// <summary>RX-08: everything dispensed to the patient, newest first, across all branches of the tenant.</summary>
+    Task<IReadOnlyList<MedicationHistoryLine>> GetMedicationHistoryAsync(int patientId, CancellationToken ct);
+}
+
+public interface IPrescriberRepository
+{
+    Task<int> AddAsync(Prescriber prescriber, CancellationToken ct);
+    Task<Prescriber?> GetByIdAsync(int prescriberId, CancellationToken ct);
+    Task<IReadOnlyList<PrescriberDto>> SearchAsync(string term, CancellationToken ct);
+}
+
+public interface IPrescriptionRepository
+{
+    Task<int> AddAsync(Prescription prescription, CancellationToken ct);
+    Task<Prescription?> GetByIdAsync(int prescriptionId, CancellationToken ct);
+
+    /// <summary>Saves the status and the dispensed quantity of every line.</summary>
+    Task UpdateAsync(Prescription prescription, CancellationToken ct);
+    Task<int> AddImageAsync(int prescriptionId, string storageKey, string contentType, int sizeBytes, int uploadedBy,
+        DateTime uploadedAtUtc, CancellationToken ct);
+    Task<StoredPrescriptionImage?> GetImageAsync(int prescriptionId, int imageId, CancellationToken ct);
+
+    /// <summary>Prescriptions with something left to dispense ("refills due" screen), optionally for one patient.</summary>
+    Task<IReadOnlyList<OpenPrescriptionDto>> GetOpenAsync(int? patientId, CancellationToken ct);
+}
+
+public interface IDispenseRepository
+{
+    Task<long> AddAsync(Dispense dispense, CancellationToken ct);
+
+    /// <summary>RX-07: what the labels of a sale's dispensed medicines need.</summary>
+    Task<IReadOnlyList<DispenseLabelRow>> GetLabelRowsAsync(long saleId, CancellationToken ct);
+}
+
+#endregion
+
+#region Controlled drugs register (BRD 8.7)
+
+public interface IControlledRegisterRepository
+{
+    /// <summary>
+    /// Appends entries. The procedure works out each running balance under a lock; it returns
+    /// false, writing nothing, when a balance would go below zero.
+    /// </summary>
+    Task<bool> AddEntriesAsync(IReadOnlyList<ControlledRegisterEntry> entries, CancellationToken ct);
+    Task<ControlledRegisterEntry?> GetEntryAsync(long entryId, CancellationToken ct);
+    Task<int> GetBalanceAsync(int branchId, int itemId, CancellationToken ct);
+
+    /// <summary>Physical stock of the item in the branch, every batch status included.</summary>
+    Task<int> GetStockQuantityAsync(int branchId, int itemId, CancellationToken ct);
+
+    /// <summary>CTL-08: smallest units of the item dispensed to the patient since the date, net of corrections.</summary>
+    Task<int> GetDispensedToPatientAsync(int patientId, int itemId, DateTime sinceUtc, CancellationToken ct);
+
+    /// <summary>The register of one item between two Cairo dates, oldest first (CTL-04, CTL-07).</summary>
+    Task<IReadOnlyList<RegisterLineDto>> GetEntriesAsync(int branchId, int itemId, DateOnly from, DateOnly to, CancellationToken ct);
+
+    /// <summary>CTL-07: opening, in, out and closing per item for one month.</summary>
+    Task<IReadOnlyList<RegisterMonthLineDto>> GetMonthlySummaryAsync(int branchId, int year, int month, CancellationToken ct);
+    Task<int> AddBalanceCheckAsync(ControlledBalanceCheck check, CancellationToken ct);
+
+    /// <summary>US-CTL-3: register balance, stock and last check of every controlled item in the branch.</summary>
+    Task<IReadOnlyList<ControlledItemStatusDto>> GetStatusAsync(int branchId, CancellationToken ct);
 }
 
 #endregion

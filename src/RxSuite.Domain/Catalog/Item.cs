@@ -2,12 +2,16 @@ using RxSuite.Domain.Common;
 
 namespace RxSuite.Domain.Catalog;
 
-// BRD 8.4 INV-01/02 (item master) and 8.3 POS-03 (selling units).
+// BRD 8.4 INV-01/02 (item master), 8.3 POS-03 (selling units), 8.6 RX-01 (link to the central drug
+// database) and 8.7 CTL-01/08 (control schedule and limits).
 
 #region Enums
 
 /// <summary>POS-03: the packaging units an item can be sold in.</summary>
 public enum UnitType : byte { Box = 1, Strip = 2, Unit = 3 }
+
+/// <summary>CTL-01: the official control table a medicine is on. None for ordinary items.</summary>
+public enum ControlSchedule : byte { None = 0, Narcotic = 1, Psychotropic = 2 }
 
 #endregion
 
@@ -42,7 +46,18 @@ public sealed class Item : TenantEntity<int>
     /// <summary>ACC-02: the item's code at the tax authority (GS1 / EGS).</summary>
     public string? EtaItemCode { get; private set; }
     public bool IsRxOnly { get; private set; }
-    public bool IsControlled { get; private set; }
+
+    /// <summary>CTL-01: the control table, normally copied from the central drug database.</summary>
+    public ControlSchedule ControlSchedule { get; private set; }
+
+    /// <summary>RX-01: the matching medicine in the central drug database. Null for local items.</summary>
+    public int? DrugId { get; private set; }
+
+    /// <summary>CTL-08: most a single prescription may receive, in the smallest unit. Null means no limit.</summary>
+    public int? ControlledLimitPerPrescription { get; private set; }
+
+    /// <summary>CTL-08: most one patient may receive in the limit window, in the smallest unit.</summary>
+    public int? ControlledLimitPerPatient { get; private set; }
 
     /// <summary>INV-06: reorder level, in the smallest unit.</summary>
     public int ReorderLevel { get; private set; }
@@ -56,8 +71,9 @@ public sealed class Item : TenantEntity<int>
 
     public static Item Create(int tenantId, string code, string nameEn, string nameAr, string scientificName,
         string strength, string dosageForm, int stripsPerBox, int unitsPerStrip, decimal? officialPrice,
-        decimal sellingPrice, decimal vatRate, string? etaItemCode, bool isRxOnly, bool isControlled,
-        int reorderLevel, bool allowAboveOfficialPrice = false)
+        decimal sellingPrice, decimal vatRate, string? etaItemCode, bool isRxOnly, ControlSchedule controlSchedule,
+        int reorderLevel, bool allowAboveOfficialPrice = false, int? drugId = null,
+        int? controlledLimitPerPrescription = null, int? controlledLimitPerPatient = null)
     {
         if (string.IsNullOrWhiteSpace(code)) throw new DomainException("The item code is required.");
         if (string.IsNullOrWhiteSpace(nameEn) && string.IsNullOrWhiteSpace(nameAr))
@@ -66,14 +82,22 @@ public sealed class Item : TenantEntity<int>
             throw new DomainException("Strips per box and units per strip must be at least 1.");
         if (vatRate is < 0 or > 1) throw new DomainException("The VAT rate must be between 0 and 1.");
         if (reorderLevel < 0) throw new DomainException("The reorder level cannot be negative.");
+        if (!Enum.IsDefined(controlSchedule)) throw new DomainException("The control schedule is not valid.");
+        if (controlSchedule == ControlSchedule.None && (controlledLimitPerPrescription is not null || controlledLimitPerPatient is not null))
+            throw new DomainException("Dispensing limits apply only to controlled items.");
+        if (controlledLimitPerPrescription <= 0 || controlledLimitPerPatient <= 0)
+            throw new DomainException("A dispensing limit must be greater than zero.");
 
         var item = new Item
         {
             TenantId = tenantId, Code = code.Trim(), NameEn = nameEn.Trim(), NameAr = nameAr.Trim(),
             ScientificName = scientificName.Trim(), Strength = strength.Trim(), DosageForm = dosageForm.Trim(),
             StripsPerBox = stripsPerBox, UnitsPerStrip = unitsPerStrip, OfficialPrice = officialPrice,
-            VatRate = vatRate, EtaItemCode = etaItemCode?.Trim(), IsRxOnly = isRxOnly,
-            IsControlled = isControlled, ReorderLevel = reorderLevel, IsActive = true
+            VatRate = vatRate, EtaItemCode = etaItemCode?.Trim(),
+            // A controlled medicine is always prescription-only.
+            IsRxOnly = isRxOnly || controlSchedule != ControlSchedule.None, ControlSchedule = controlSchedule,
+            DrugId = drugId, ControlledLimitPerPrescription = controlledLimitPerPrescription,
+            ControlledLimitPerPatient = controlledLimitPerPatient, ReorderLevel = reorderLevel, IsActive = true
         };
         item.ChangePrice(sellingPrice, allowAboveOfficialPrice);
         return item;
@@ -121,8 +145,14 @@ public sealed class Item : TenantEntity<int>
 
     #region Dispensing rules
 
+    /// <summary>CTL-01: the item is on a narcotic or psychotropic table.</summary>
+    public bool IsControlled => ControlSchedule != ControlSchedule.None;
+
     /// <summary>Rx-only and controlled items can only leave the pharmacy through a licensed pharmacist.</summary>
     public bool RequiresPharmacist => IsRxOnly || IsControlled;
+
+    /// <summary>The name printed on receipts, labels and the register.</summary>
+    public string DisplayName => string.IsNullOrWhiteSpace(NameEn) ? NameAr : NameEn;
 
     #endregion
 }

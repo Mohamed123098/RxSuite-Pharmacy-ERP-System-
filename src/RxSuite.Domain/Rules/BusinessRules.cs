@@ -14,6 +14,8 @@ public sealed class BusinessRules
     public InventoryRules Inventory { get; init; } = new();
     public PurchasingRules Purchasing { get; init; } = new();
     public PosRules Pos { get; init; } = new();
+    public ClinicalRules Clinical { get; init; } = new();
+    public ControlledRules Controlled { get; init; } = new();
 }
 
 #region Subscription (BRD 8.1)
@@ -90,6 +92,38 @@ public sealed class PosRules
 
     /// <summary>BR-POS-6: from this receipt total the buyer's national ID and name are required.</summary>
     public decimal BuyerIdentificationThreshold { get; init; } = 150000m;
+}
+
+#endregion
+
+#region Prescriptions (BRD 8.6)
+
+public sealed class ClinicalRules
+{
+    /// <summary>
+    /// BR-RX-1: lets a pharmacist sell an Rx-only item before the prescription is recorded. Off by
+    /// default. Never applies to controlled items (CTL-03).
+    /// </summary>
+    public bool AllowRecordPrescriptionLater { get; init; }
+
+    /// <summary>RX-02: medicines dispensed to the patient within this many days count as current medication.</summary>
+    public int CurrentMedicationDays { get; init; } = 30;
+
+    /// <summary>RX-05: largest prescription image accepted.</summary>
+    public int MaxImageBytes { get; init; } = 5 * 1024 * 1024;
+}
+
+#endregion
+
+#region Controlled drugs (BRD 8.7)
+
+public sealed class ControlledRules
+{
+    /// <summary>CTL-06: a balance check is due when the last one is older than this.</summary>
+    public int BalanceCheckIntervalDays { get; init; } = 7;
+
+    /// <summary>CTL-08: the period the per-patient limit is counted over.</summary>
+    public int PatientLimitWindowDays { get; init; } = 30;
 }
 
 #endregion

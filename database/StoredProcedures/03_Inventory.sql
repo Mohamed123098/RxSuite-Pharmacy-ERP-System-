@@ -5,14 +5,18 @@ CREATE OR ALTER PROCEDURE dbo.usp_Item_Insert
     @TenantId INT, @Code NVARCHAR(30), @NameEn NVARCHAR(200), @NameAr NVARCHAR(200), @ScientificName NVARCHAR(200),
     @Strength NVARCHAR(50), @DosageForm NVARCHAR(50), @StripsPerBox INT, @UnitsPerStrip INT,
     @OfficialPrice DECIMAL(18,2) = NULL, @SellingPrice DECIMAL(18,2), @VatRate DECIMAL(5,4),
-    @EtaItemCode NVARCHAR(50) = NULL, @IsRxOnly BIT, @IsControlled BIT, @ReorderLevel INT, @BarcodesJson NVARCHAR(MAX)
+    @EtaItemCode NVARCHAR(50) = NULL, @IsRxOnly BIT, @ControlSchedule TINYINT, @DrugId INT = NULL,
+    @ControlledLimitPerPrescription INT = NULL, @ControlledLimitPerPatient INT = NULL, @ReorderLevel INT,
+    @BarcodesJson NVARCHAR(MAX)
 AS
 BEGIN
     SET NOCOUNT ON;
     INSERT INTO dbo.Items (TenantId, Code, NameEn, NameAr, ScientificName, Strength, DosageForm, StripsPerBox, UnitsPerStrip,
-                           OfficialPrice, SellingPrice, VatRate, EtaItemCode, IsRxOnly, IsControlled, ReorderLevel)
+                           OfficialPrice, SellingPrice, VatRate, EtaItemCode, IsRxOnly, ControlSchedule, DrugId,
+                           ControlledLimitPerPrescription, ControlledLimitPerPatient, ReorderLevel)
     VALUES (@TenantId, @Code, @NameEn, @NameAr, @ScientificName, @Strength, @DosageForm, @StripsPerBox, @UnitsPerStrip,
-            @OfficialPrice, @SellingPrice, @VatRate, @EtaItemCode, @IsRxOnly, @IsControlled, @ReorderLevel);
+            @OfficialPrice, @SellingPrice, @VatRate, @EtaItemCode, @IsRxOnly, @ControlSchedule, @DrugId,
+            @ControlledLimitPerPrescription, @ControlledLimitPerPatient, @ReorderLevel);
 
     DECLARE @ItemId INT = CAST(SCOPE_IDENTITY() AS INT);
 
@@ -43,7 +47,8 @@ AS
 BEGIN
     SET NOCOUNT ON;
     SELECT Id, TenantId, Code, NameEn, NameAr, ScientificName, Strength, DosageForm, StripsPerBox, UnitsPerStrip,
-           OfficialPrice, SellingPrice, VatRate, EtaItemCode, IsRxOnly, IsControlled, ReorderLevel, IsActive
+           OfficialPrice, SellingPrice, VatRate, EtaItemCode, IsRxOnly, ControlSchedule, DrugId,
+           ControlledLimitPerPrescription, ControlledLimitPerPatient, ReorderLevel, IsActive
     FROM dbo.Items
     WHERE Id = @ItemId AND TenantId = @TenantId;
 END
@@ -57,7 +62,8 @@ AS
 BEGIN
     SET NOCOUNT ON;
     SELECT Id, TenantId, Code, NameEn, NameAr, ScientificName, Strength, DosageForm, StripsPerBox, UnitsPerStrip,
-           OfficialPrice, SellingPrice, VatRate, EtaItemCode, IsRxOnly, IsControlled, ReorderLevel, IsActive
+           OfficialPrice, SellingPrice, VatRate, EtaItemCode, IsRxOnly, ControlSchedule, DrugId,
+           ControlledLimitPerPrescription, ControlledLimitPerPatient, ReorderLevel, IsActive
     FROM dbo.Items
     WHERE TenantId = @TenantId
       AND Id IN (SELECT CAST(j.[value] AS INT) FROM OPENJSON(@ItemIdsJson) j);
@@ -85,7 +91,8 @@ BEGIN
     SELECT TOP (30)
            i.Id, i.Code, i.NameEn, i.NameAr, i.ScientificName, i.Strength, i.DosageForm, i.SellingPrice,
            i.StripsPerBox * i.UnitsPerStrip AS UnitsPerBox,
-           ISNULL(s.AvailableQuantity, 0) AS AvailableQuantity, s.NearestExpiry, i.IsRxOnly, i.IsControlled
+           ISNULL(s.AvailableQuantity, 0) AS AvailableQuantity, s.NearestExpiry, i.IsRxOnly,
+           CAST(CASE WHEN i.ControlSchedule > 0 THEN 1 ELSE 0 END AS BIT) AS IsControlled
     FROM dbo.Items i
     OUTER APPLY (SELECT SUM(b.Quantity) AS AvailableQuantity, MIN(b.ExpiryDate) AS NearestExpiry
                  FROM dbo.Batches b

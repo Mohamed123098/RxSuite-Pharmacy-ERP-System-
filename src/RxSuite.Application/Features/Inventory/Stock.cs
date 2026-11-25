@@ -1,6 +1,7 @@
 using RxSuite.Application.Abstractions;
 using RxSuite.Application.Common;
 using RxSuite.Domain.Common;
+using RxSuite.Domain.Controlled;
 using RxSuite.Domain.Identity;
 using RxSuite.Domain.Inventory;
 using RxSuite.Domain.Rules;
@@ -63,7 +64,8 @@ public sealed record AdjustStockCommand(int BatchId, int QuantityChange, Adjustm
     ManagerOverride? Approval) : ICommand<Unit>;
 
 internal sealed class AdjustStockHandler(
-    IStockRepository stock, ICurrentUser currentUser, IOverrideAuthorizer overrides, IAuditTrail audit, BusinessRules rules)
+    IStockRepository stock, IItemRepository items, IControlledRegisterRepository register, IPharmacistCheck pharmacists,
+    ICurrentUser currentUser, IOverrideAuthorizer overrides, IAuditTrail audit, IClock clock, BusinessRules rules)
     : IRequestHandler<AdjustStockCommand, Unit>
 {
     public async Task<Result<Unit>> HandleAsync(AdjustStockCommand c, CancellationToken ct)
@@ -74,6 +76,16 @@ internal sealed class AdjustStockHandler(
         var batch = await stock.GetBatchAsync(c.BatchId, ct);
         if (batch is null) return Errors.NotFound("Batch", c.BatchId);
         if (!currentUser.CanAccessBranch(batch.BranchId)) return Errors.BranchNotAllowed;
+
+        // CTL-02 / CTL-04: a controlled item is adjusted by a pharmacist, and the register follows.
+        var item = await items.GetByIdAsync(batch.ItemId, ct);
+        int? pharmacistId = null;
+        if (item is { IsControlled: true })
+        {
+            var pharmacist = await pharmacists.CurrentAsync(ct);
+            if (pharmacist.IsFailure) return pharmacist.Error;
+            pharmacistId = pharmacist.Value.Id;
+        }
 
         // BR-INV-3: a large loss needs a second person unless the user may approve it themselves.
         string? approvedBy = null;
@@ -90,6 +102,17 @@ internal sealed class AdjustStockHandler(
 
         if (!await stock.ApplyMovementsAsync(batch.BranchId, [movement], ct))
             return Error.Conflict("Stock.Insufficient", "The batch does not hold that much stock.");
+
+        if (pharmacistId is { } by)
+        {
+            // CTL-04 "out (destruction)" for expired or damaged stock; any other change is an adjustment.
+            var type = c.QuantityChange < 0 && c.Reason is AdjustmentReason.Expiry or AdjustmentReason.Damage
+                ? RegisterEntryType.Destruction
+                : RegisterEntryType.Adjustment;
+            var entry = ControlledRegisterEntry.ForStockMovement(currentUser.TenantId, batch.BranchId, batch.ItemId,
+                batch.Id, type, c.QuantityChange, "StockAdjustment", batch.Id, by, movement.Reason, clock.UtcNow);
+            if (!await register.AddEntriesAsync([entry], ct)) return Errors.RegisterNegative;
+        }
 
         await audit.RecordAsync("Inventory", "StockAdjusted", batch.Id, batch.Quantity.ToString(),
             (batch.Quantity + c.QuantityChange).ToString(),

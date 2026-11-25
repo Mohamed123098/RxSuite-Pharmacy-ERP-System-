@@ -5,3 +5,6 @@ obj/
 node_modules/
 dist/
 appsettings.Development.json
+
+# Encrypted prescription images (BR-RX-3): never commit them
+**/data/prescription-images/

@@ -12,13 +12,14 @@ namespace RxSuite.Infrastructure;
 /// </summary>
 public static class DependencyInjection
 {
-    public static IServiceCollection AddInfrastructure(this IServiceCollection services, string connectionString)
+    public static IServiceCollection AddInfrastructure(this IServiceCollection services, string connectionString,
+        PrescriptionImageOptions? prescriptionImages = null)
     {
         if (string.IsNullOrWhiteSpace(connectionString))
             throw new ArgumentException("The database connection string is missing.", nameof(connectionString));
 
         AddPersistence(services, connectionString);
-        AddServices(services);
+        AddServices(services, prescriptionImages ?? new PrescriptionImageOptions());
         return services;
     }
 
@@ -46,17 +47,24 @@ public static class DependencyInjection
         services.AddScoped<IShiftRepository, ShiftRepository>();
         services.AddScoped<ISaleRepository, SaleRepository>();
         services.AddScoped<IEtaDocumentRepository, EtaDocumentRepository>();
+        services.AddScoped<IDrugRepository, DrugRepository>();
+        services.AddScoped<IPatientRepository, PatientRepository>();
+        services.AddScoped<IPrescriberRepository, PrescriberRepository>();
+        services.AddScoped<IPrescriptionRepository, PrescriptionRepository>();
+        services.AddScoped<IDispenseRepository, DispenseRepository>();
+        services.AddScoped<IControlledRegisterRepository, ControlledRegisterRepository>();
     }
 
     #endregion
 
     #region Services
 
-    private static void AddServices(IServiceCollection services)
+    private static void AddServices(IServiceCollection services, PrescriptionImageOptions prescriptionImages)
     {
         services.AddSingleton<IClock, SystemClock>();
         services.AddSingleton<ISecretHasher, SecretHasher>();
         services.AddSingleton<IEtaGateway, UnconfiguredEtaGateway>();
+        services.AddSingleton<IPrescriptionImageStore>(new EncryptedFilePrescriptionImageStore(prescriptionImages));
     }
 
     #endregion
